@@ -198,14 +198,13 @@ footer{background:#073c18;color:#fff;display:grid;grid-template-columns:2fr 1fr 
 <div class="referral-box" id="referralBox">
   <button class="ref-close" onclick="closeReferral()">×</button>
   <h2>REFER &amp; EARN</h2>
-  <p>Choose the referral offer you want to share.</p>
+  <p>Share your personal referral link to unlock your own 15% OFF on Food.</p>
   <div class="ref-code" id="referralCode">Loading...</div>
   <div class="referral-actions" style="display:grid;grid-template-columns:1fr;gap:8px">
-    <button class="ref-share" onclick="shareFoodReferral()">REFER LINK — GET 15% OFF ON FOOD</button>
-    <button class="ref-copy" onclick="shareComboReferral()">REFER FAMILY KIT COMBO — GET ₹100 CASHBACK</button>
+    <button class="ref-share" onclick="shareFoodReferral()">SHARE REFERRAL LINK — GET 15% OFF ON FOOD</button>
   </div>
-  <p style="font-size:12px;color:#666;margin-top:12px"><b>Food referral:</b> the person sharing the link gets 15% OFF on Food. The person opening the link does not receive this discount.</p>
-  <p style="font-size:12px;color:#666"><b>Combo referral:</b> no 15% discount is applied. A successful combo referral is marked with the referral code for ₹100 cashback tracking.</p>
+  <p style="font-size:12px;color:#666;margin-top:12px"><b>Referral rule:</b> only the account that shares its own link receives the 15% Food discount. The person opening the link receives no discount.</p>
+  <p style="font-size:12px;color:#666"><b>Chain referral:</b> if the person who opened your link later creates/logs into their own account and shares their own referral link, they unlock their own 15% Food discount. This can continue from user to user.</p>
   <div class="ref-status" id="referralStatus"></div>
 </div>
 <div class="toast" id="toast"></div>
@@ -423,335 +422,183 @@ function orderComboDirectlyOnWhatsApp(){
   const message=`Hello EM India, I want to order the ₹1499 Limited Time Combo:\n\n${COMBO_NAME}${referralLine}\n\nPlease confirm my order. Thank you!`;
   window.location.href="https://wa.me/"+WHATSAPP_NUMBER+"?text="+encodeURIComponent(message);
 }
-function getReferralCode(){
-  let code=localStorage.getItem("emIndiaReferralCode");
-  if(!code){
-    const chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    let random="";
-    if(window.crypto&&crypto.getRandomValues){
-      const bytes=new Uint32Array(8);crypto.getRandomValues(bytes);
-      random=[...bytes].map(n=>chars[n%chars.length]).join("");
-    }else{random=Math.random().toString(36).slice(2,10).toUpperCase();}
-    code="EM"+random;
-    localStorage.setItem("emIndiaReferralCode",code);
+
+// Initial render
+renderCategories();
+renderProducts();
+updateCart();
+</script>
+
+<script>
+/* CLEAN REFERRAL LOGIC
+   Rule: only the account that successfully shares its OWN referral link gets 15% OFF on FOOD.
+   Opening another person's link gives NO discount. If that person later shares their own link,
+   they unlock their own benefit, so the referral chain can continue indefinitely. */
+(function(){
+  const ACCOUNTS_KEY='emIndiaAccountsV2';
+  const CURRENT_KEY='emIndiaCurrentUserV2';
+  const PUBLIC_URL='https://em-indiacvstore.vercel.app/';
+
+  function readAccounts(){
+    try{return JSON.parse(localStorage.getItem(ACCOUNTS_KEY)||'{}');}
+    catch(e){return {};}
   }
-  return code;
-}
-function setReferralStatus(){
-  const applied=localStorage.getItem("emIndiaAppliedReferralCode")||"";
-  const input=document.getElementById("friendReferralCode");
-  const status=document.getElementById("referralStatus");
-  if(input&&applied)input.value=applied;
-  if(status){
-    status.textContent=applied ? "✓ Referral code applied successfully: "+applied : "";
+  function writeAccounts(accounts){localStorage.setItem(ACCOUNTS_KEY,JSON.stringify(accounts));}
+  function currentAccount(){
+    const accounts=readAccounts();
+    const key=localStorage.getItem(CURRENT_KEY)||'';
+    return accounts[key]||null;
   }
-}
-function openReferral(){
-  const box=document.getElementById("referralBox");
-  document.getElementById("referralCode").textContent=getReferralCode();
-  setReferralStatus();
-  document.getElementById("overlay").classList.add("open");
-  box.classList.add("open");
-}
-function closeReferral(){
-  const box=document.getElementById("referralBox");
-  if(box)box.classList.remove("open");
-  document.getElementById("overlay").classList.remove("open");
-}
-function copyReferralCode(){
-  const code=getReferralCode();
-  const done=()=>showToast("Referral code copied");
-  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(code).then(done).catch(()=>fallbackCopy(code));}
-  else fallbackCopy(code);
-}
-function fallbackCopy(text){
-  const t=document.createElement("textarea");t.value=text;document.body.appendChild(t);t.select();document.execCommand("copy");t.remove();showToast("Referral code copied");
-}
-const EM_INDIA_PUBLIC_URL="https://em-indiacvstore.vercel.app/";
-function getShareReferralUrl(code){
-  // Always share the permanent production root URL, never a temporary Vercel deployment URL.
-  return EM_INDIA_PUBLIC_URL.replace(/\/+$/,"/")+"?ref="+encodeURIComponent(code);
-}
-function shareReferral(){
-  const code=getReferralCode();
-  const url=getShareReferralUrl(code);
-  const text="Shop with EM India and get 15% OFF on eligible food orders. Referral code: "+code+"\n"+url;
-  if(navigator.share){navigator.share({title:"EM India Referral",text,url}).catch(()=>{});}
-  else window.open("https://wa.me/?text="+encodeURIComponent(text),"_blank");
-}
-function applyReferralCode(){
-  const input=document.getElementById("friendReferralCode");
-  const value=(input.value||"").trim().toUpperCase().replace(/[^A-Z0-9]/g,"");
-  if(!value){showToast("Please enter a referral code");return;}
-  if(value===getReferralCode()){showToast("You cannot apply your own referral code");return;}
-  if(!/^EM[A-Z0-9]{4,12}$/.test(value)){showToast("Please enter a valid EM referral code");return;}
-  localStorage.setItem("emIndiaAppliedReferralCode",value);
-  localStorage.setItem("emIndiaReferralAppliedAt",new Date().toISOString());
-  input.value=value;
-  setReferralStatus();
-  showToast("Referral code applied successfully");
-}
-function applyReferralFromLink(){
-  // Referral is intentionally read only from the ?ref= query on the permanent website root.
-  const params=new URLSearchParams(window.location.search);
-  const ref=(params.get("ref")||"").trim().toUpperCase().replace(/[^A-Z0-9]/g,"");
-  if(ref && /^EM[A-Z0-9]{4,12}$/.test(ref)){
-    const own=localStorage.getItem("emIndiaReferralCode")||"";
-    if(ref!==own){
-      localStorage.setItem("emIndiaAppliedReferralCode",ref);
-      localStorage.setItem("emIndiaReferralAppliedAt",new Date().toISOString());
-      setTimeout(()=>showToast("Referral applied: 15% discount unlocked"),300);
+  function saveCurrentAccount(account){
+    const accounts=readAccounts();
+    accounts[account.email]=account;
+    writeAccounts(accounts);
+    localStorage.setItem('emIndiaUserAccount',JSON.stringify(account));
+  }
+  function requireAccount(){
+    if(!currentAccount()){
+      if(typeof window.openLogin==='function')window.openLogin();
+      if(typeof window.showToast==='function')window.showToast('Please create or log in to your account first.');
+      return false;
     }
+    return true;
   }
-}
-function updateAccountUI(){
-  const user=JSON.parse(localStorage.getItem("emIndiaUserAccount")||"null");
-  const label=document.querySelector(".account strong");
-  const muted=document.querySelector(".account .muted");
-  if(user){if(muted)muted.textContent="Welcome, "+(user.name||"User");if(label)label.textContent="My Account";}
-}
-function createAccount(){
-  const name=(document.getElementById("accountName").value||"").trim();
-  const email=(document.getElementById("accountEmail").value||"").trim().toLowerCase();
-  const password=document.getElementById("accountPassword").value||"";
-  const status=document.getElementById("accountStatus");
-  if(!name||!email||!password){status.textContent="Please complete all account details.";return;}
-  if(!/^\S+@\S+\.\S+$/.test(email)){status.textContent="Please enter a valid email.";return;}
-  if(password.length<4){status.textContent="Password must be at least 4 characters.";return;}
-  const user={name,email,password,createdAt:new Date().toISOString()};
-  localStorage.setItem("emIndiaUserAccount",JSON.stringify(user));
-  getReferralCode();
-  status.textContent="Account created successfully. Your personal referral code is ready.";updateAccountUI();showToast("Account created successfully");setTimeout(closeAll,700);
-}
-function loginAccount(){
-  const email=(document.getElementById("accountEmail").value||"").trim().toLowerCase();
-  const password=document.getElementById("accountPassword").value||"";
-  const user=JSON.parse(localStorage.getItem("emIndiaUserAccount")||"null");
-  const status=document.getElementById("accountStatus");
-  if(user&&user.email===email&&user.password===password){status.textContent="Login successful.";updateAccountUI();showToast("Login successful");setTimeout(closeAll,500);}
-  else status.textContent="Account details not found. Please create an account first.";
-}
-function openLogin(){document.getElementById("overlay").classList.add("open");document.getElementById("loginBox").classList.add("open");}
-function closeAll(){document.getElementById("overlay").classList.remove("open");document.getElementById("cartDrawer").classList.remove("open");document.getElementById("loginBox").classList.remove("open");const rb=document.getElementById("referralBox");if(rb)rb.classList.remove("open");}
+  function getOwnCode(account){
+    if(!account.referralCode){
+      const bytes=new Uint32Array(4);
+      if(window.crypto&&crypto.getRandomValues)crypto.getRandomValues(bytes);
+      const random=Array.from(bytes).map(n=>n.toString(36)).join('').replace(/[^a-z0-9]/gi,'').slice(0,10).toUpperCase() || Math.random().toString(36).slice(2,10).toUpperCase();
+      account.referralCode='EM'+random;
+      saveCurrentAccount(account);
+    }
+    return account.referralCode;
+  }
+  function activateOwnBenefit(){
+    const account=currentAccount();
+    if(!account)return false;
+    account.foodReferrerDiscount=true;
+    account.foodReferrerDiscountActivatedAt=new Date().toISOString();
+    saveCurrentAccount(account);
+    return true;
+  }
+  function refresh(){
+    if(typeof window.updateCart==='function')window.updateCart();
+    if(typeof window.updateAccountUI==='function')window.updateAccountUI();
+    window.setReferralStatus();
+  }
 
-function showToast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),1800);}
-function productMatchesCategory(p,name){
-  const text=((p.name||"")+" "+(p.details||"")).toLowerCase();
-  const keywords={
-    "Snacks & Noodles":["maggi","maggie","noodle","bingo","kurkure","bhujia"],
-    "Salt & Spices":["salt","haldi","turmeric","mirchi","chilli","dhaniya","coriander"],
-    "Rice & Grains":["rice","poha","chivda","besan","maida","sooji","semolina"],
-    "Oil & Ghee":["oil","ghee"],
-    "Tea & Coffee":["tea","coffee"]
+  // Remove every old recipient-discount flag so a person who only opens a link can never get a discount.
+  ['emIndiaAppliedReferralCode','emIndiaReferralAppliedAt','emIndiaIncomingReferralDiscount','emIndiaReferralDiscount'].forEach(k=>localStorage.removeItem(k));
+
+  window.cartSummaryFor=function(items){
+    const subtotal=items.reduce((sum,item)=>sum+(Number(item.unitPrice)||0)*(Number(item.qty)||0),0);
+    const foodSubtotal=items.filter(item=>item.type==='food').reduce((sum,item)=>sum+(Number(item.unitPrice)||0)*(Number(item.qty)||0),0);
+    const account=currentAccount();
+    const hasOwnBenefit=!!(account&&account.foodReferrerDiscount);
+    const discount=hasOwnBenefit?Math.round(foodSubtotal*0.15):0;
+    return {subtotal,foodSubtotal,discount,total:Math.max(0,subtotal-discount),appliedReferral:hasOwnBenefit?'YOUR REFERRAL SHARE BENEFIT':''};
   };
-  return (keywords[name]||[]).some(k=>text.includes(k));
-}
-function filterCategory(name){
-  const selected=products.filter(p=>productMatchesCategory(p,name));
-  const remaining=products.filter(p=>!productMatchesCategory(p,name));
-  renderProducts([...selected,...remaining]);
-  showToast(name+" selected");
-  document.getElementById("products").scrollIntoView({behavior:"smooth",block:"start"});
-}
-function searchProducts(){const q=document.getElementById("search").value.trim().toLowerCase();if(!q){renderProducts();return;}const filtered=products.filter(p=>p.name.toLowerCase().includes(q)||p.details.toLowerCase().includes(q)||p.price.toLowerCase().includes(q));renderProducts(filtered);document.getElementById("products").scrollIntoView({behavior:"smooth"});}
-function addComboToCart(){orderComboDirectlyOnWhatsApp();}
-function orderComboDirectlyOnWhatsApp(){
-  const appliedReferral=localStorage.getItem("emIndiaAppliedReferralCode")||"";
-  const referralLine=appliedReferral?`\n\nReferral Code Applied: ${appliedReferral}\nDiscount: 15% referral discount applied`:"";
-  const message=`Hello EM India, I want to order the ₹1499 Limited Time Combo:\n\n${COMBO_NAME}${referralLine}\n\nPlease confirm my order. Thank you!`;
-  window.location.href="https://wa.me/"+WHATSAPP_NUMBER+"?text="+encodeURIComponent(message);
-}
-function getReferralCode(){
-  let code=localStorage.getItem("emIndiaReferralCode");
-  if(!code){
-    const chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    let random="";
-    if(window.crypto&&crypto.getRandomValues){
-      const bytes=new Uint32Array(8);crypto.getRandomValues(bytes);
-      random=[...bytes].map(n=>chars[n%chars.length]).join("");
-    }else{random=Math.random().toString(36).slice(2,10).toUpperCase();}
-    code="EM"+random;
-    localStorage.setItem("emIndiaReferralCode",code);
-  }
-  return code;
-}
-function setReferralStatus(){
-  const applied=localStorage.getItem("emIndiaAppliedReferralCode")||"";
-  const input=document.getElementById("friendReferralCode");
-  const status=document.getElementById("referralStatus");
-  if(input&&applied)input.value=applied;
-  if(status){
-    status.textContent=applied ? "✓ Referral applied: "+applied+" — 15% discount will be added to your order." : "";
-  }
-}
-function openReferral(){
-  const box=document.getElementById("referralBox");
-  document.getElementById("referralCode").textContent=getReferralCode();
-  setReferralStatus();
-  document.getElementById("overlay").classList.add("open");
-  box.classList.add("open");
-}
-function closeReferral(){
-  const box=document.getElementById("referralBox");
-  if(box)box.classList.remove("open");
-  document.getElementById("overlay").classList.remove("open");
-}
-function copyReferralCode(){
-  const code=getReferralCode();
-  const done=()=>showToast("Referral code copied");
-  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(code).then(done).catch(()=>fallbackCopy(code));}
-  else fallbackCopy(code);
-}
-function fallbackCopy(text){
-  const t=document.createElement("textarea");t.value=text;document.body.appendChild(t);t.select();document.execCommand("copy");t.remove();showToast("Referral code copied");
-}
-function shareReferral(){
-  const code=getReferralCode();
-  const url=window.location.origin+window.location.pathname.replace(/index\\.html$/i,"")+"?ref="+encodeURIComponent(code);
-  const text="Shop with EM India and use my referral link to get 15% OFF on eligible food orders. My referral code: "+code+"\\n"+url;
-  if(navigator.share){navigator.share({title:"EM India Referral",text,url}).catch(()=>{});}
-  else window.open("https://wa.me/?text="+encodeURIComponent(text),"_blank");
-}
-function applyReferralCode(){
-  const input=document.getElementById("friendReferralCode");
-  const value=(input.value||"").trim().toUpperCase().replace(/[^A-Z0-9]/g,"");
-  if(!value){showToast("Please enter a referral code");return;}
-  if(value===getReferralCode()){showToast("You cannot apply your own referral code");return;}
-  if(!/^EM[A-Z0-9]{4,12}$/.test(value)){showToast("Please enter a valid EM referral code");return;}
-  localStorage.setItem("emIndiaAppliedReferralCode",value);
-  localStorage.setItem("emIndiaReferralAppliedAt",new Date().toISOString());
-  input.value=value;
-  setReferralStatus();
-  showToast("Referral applied — 15% discount added");
-}
-function applyReferralFromLink(){
-  const params=new URLSearchParams(location.search);
-  const ref=(params.get("ref")||"").trim().toUpperCase();
-  if(ref && ref!==getReferralCode() && /^EM[A-Z0-9]{4,12}$/.test(ref)){
-    localStorage.setItem("emIndiaAppliedReferralCode",ref);
-  }
-}
-applyReferralFromLink();
-renderCategories();renderProducts();updateCart();
-</script>
 
-<script>
-/* Final referral-link safety override: always share the active production website URL. */
-function shareReferral(){
-  const code=getReferralCode();
-  const cleanPath=window.location.pathname.replace(/index\.html$/i,"");
-  const url=window.location.origin+(cleanPath||"/")+"?ref="+encodeURIComponent(code);
-  const shareText="Shop with EM India and get 15% OFF on eligible food orders using my referral link. Referral code: "+code+"\n"+url;
-  if(navigator.share){
-    navigator.share({title:"EM India Referral",text:shareText,url:url}).catch(()=>{});
-  }else{
-    window.open("https://wa.me/?text="+encodeURIComponent(shareText),"_blank");
-  }
-}
-</script>
+  window.getReferralCode=function(){
+    const account=currentAccount();
+    return account?getOwnCode(account):'CREATE ACCOUNT FIRST';
+  };
 
-<script>
-/* FINAL ACCOUNT + TWO REFERRAL SYSTEM OVERRIDE */
-(function(){
-  const ACCOUNTS_KEY='emIndiaAccountsV2', CURRENT_KEY='emIndiaCurrentUserV2';
-  function loadAccounts(){try{return JSON.parse(localStorage.getItem(ACCOUNTS_KEY)||'{}')}catch(e){return {}}}
-  function saveAccounts(a){localStorage.setItem(ACCOUNTS_KEY,JSON.stringify(a));}
-  function currentEmail(){return localStorage.getItem(CURRENT_KEY)||'';}
-  function currentAccount(){const a=loadAccounts(); return a[currentEmail()]||null;}
-  function saveCurrent(acc){const a=loadAccounts(); a[acc.email]=acc; saveAccounts(a);}
-  function requireAccount(){if(!currentAccount()){openLogin();showToast('Please create or log in to your account first.');return false;}return true;}
-  function accountReferralCode(acc){if(!acc.referralCode){acc.referralCode='EM'+Math.random().toString(36).slice(2,10).toUpperCase();saveCurrent(acc);}return acc.referralCode;}
-  function saveCartForAccount(){const acc=currentAccount(); if(!acc)return; acc.cart=cartItems; saveCurrent(acc);}
-  function loadCartForAccount(){const acc=currentAccount(); cartItems.length=0; if(acc&&Array.isArray(acc.cart))acc.cart.forEach(x=>cartItems.push(x));}
-  function renderHistory(){const el=document.getElementById('accountHistory'); if(!el)return; const acc=currentAccount(); if(!acc){el.innerHTML='';return;} const h=Array.isArray(acc.history)?acc.history:[]; el.innerHTML='<b>Order History</b>'+(!h.length?'<div style="margin-top:5px;color:#777">No previous orders.</div>':h.slice(0,20).map(o=>'<div style="margin-top:7px;padding:7px;border:1px solid #eee;border-radius:8px"><b>'+o.date+'</b><br>'+o.summary+'<br><b>Total: ₹'+o.total+'</b></div>').join(''));
-  }
-  window.createAccount=function(){const name=(document.getElementById('accountName').value||'').trim();const email=(document.getElementById('accountEmail').value||'').trim().toLowerCase();const password=document.getElementById('accountPassword').value||'';const status=document.getElementById('accountStatus');if(!name||!email||!password){status.textContent='Please complete all account details.';return;}const a=loadAccounts();a[email]=a[email]||{name,email,password,cart:[],history:[],referralCode:'',foodReferrerDiscount:false};a[email].name=name;a[email].password=password;saveAccounts(a);localStorage.setItem(CURRENT_KEY,email);loadCartForAccount();status.textContent='Account created successfully.';updateAccountUI();renderHistory();updateCart();showToast('Account created successfully');setTimeout(closeAll,600);};
-  window.loginAccount=function(){const email=(document.getElementById('accountEmail').value||'').trim().toLowerCase();const password=document.getElementById('accountPassword').value||'';const a=loadAccounts();const acc=a[email];const status=document.getElementById('accountStatus');if(acc&&acc.password===password){localStorage.setItem(CURRENT_KEY,email);loadCartForAccount();updateAccountUI();renderHistory();updateCart();status.textContent='Login successful. Your cart and order history are restored.';showToast('Login successful');setTimeout(closeAll,600);}else status.textContent='Account details not found. Please create an account first.';};
-  window.updateAccountUI=function(){const acc=currentAccount();const label=document.querySelector('.account strong');const muted=document.querySelector('.account .muted');if(acc){if(label)label.textContent='MY ACCOUNT';if(muted)muted.textContent='Welcome, '+(acc.name||'User');}else{if(label)label.textContent='MY ACCOUNT';if(muted)muted.textContent='Login / Register';}renderHistory();};
-  const oldAdd=window.addCartItem; window.addCartItem=function(){if(!requireAccount())return;oldAdd.apply(this,arguments);saveCartForAccount();};
-  const oldInc=window.increaseQty, oldDec=window.decreaseQty, oldRem=window.removeCartItem;
-  if(oldInc)window.increaseQty=function(){oldInc.apply(this,arguments);saveCartForAccount();}; if(oldDec)window.decreaseQty=function(){oldDec.apply(this,arguments);saveCartForAccount();}; if(oldRem)window.removeCartItem=function(){oldRem.apply(this,arguments);saveCartForAccount();};
-  window.cartSummaryFor=function(items){const subtotal=items.reduce((sum,item)=>sum+(Number(item.unitPrice)||0)*(Number(item.qty)||0),0);const foodSubtotal=items.filter(item=>item.type==='food').reduce((sum,item)=>sum+(Number(item.unitPrice)||0)*(Number(item.qty)||0),0);const acc=currentAccount();const discount=acc&&acc.foodReferrerDiscount?Math.round(foodSubtotal*0.15):0;return {subtotal,foodSubtotal,discount,total:Math.max(0,subtotal-discount),appliedReferral:acc&&acc.foodReferrerDiscount?'YOUR FOOD REFERRAL BENEFIT':''};};
-  window.shareFoodReferral=function(){if(!requireAccount())return;const acc=currentAccount();const code=accountReferralCode(acc);acc.foodReferrerDiscount=true;saveCurrent(acc);const url='https://em-indiacvstore.vercel.app/?ref='+encodeURIComponent(code)+'&mode=food';const text='Shop with EM India using my referral link: '+url;if(navigator.share)navigator.share({title:'EM India Food Referral',text,url}).catch(()=>{});else navigator.clipboard&&navigator.clipboard.writeText(url);setReferralStatus();showToast('Food referral shared. Your 15% Food discount is active.');};
-  window.shareComboReferral=function(){if(!requireAccount())return;const acc=currentAccount();const code=accountReferralCode(acc);const url='https://em-indiacvstore.vercel.app/?ref='+encodeURIComponent(code)+'&mode=combo';const text='Refer the EM India Family Kit Combo: '+url;if(navigator.share)navigator.share({title:'EM India Family Kit Combo Referral',text,url}).catch(()=>{});else navigator.clipboard&&navigator.clipboard.writeText(url);showToast('Combo referral link shared. No 15% discount is applied.');};
-  window.setReferralStatus=function(){const el=document.getElementById('referralStatus');const acc=currentAccount();if(el&&acc)el.textContent=acc.foodReferrerDiscount?'✓ Your 15% OFF on Food is active.':'Choose a referral option to share.';};
-  window.getReferralCode=function(){const acc=currentAccount();return acc?accountReferralCode(acc):'CREATE ACCOUNT FIRST';};
-  window.openReferral=function(){if(!requireAccount())return;document.getElementById('referralCode').textContent=getReferralCode();setReferralStatus();document.getElementById('overlay').classList.add('open');document.getElementById('referralBox').classList.add('open');};
-  window.applyReferralFromLink=function(){const p=new URLSearchParams(location.search),ref=(p.get('ref')||'').trim().toUpperCase(),mode=(p.get('mode')||'').toLowerCase();if(ref){localStorage.setItem('emIndiaIncomingReferralCode',ref);localStorage.setItem('emIndiaIncomingReferralMode',mode);localStorage.setItem('emIndiaIncomingReferralAt',new Date().toISOString());}};
+  window.openReferral=function(){
+    if(!requireAccount())return;
+    const box=document.getElementById('referralBox');
+    document.getElementById('referralCode').textContent=window.getReferralCode();
+    window.setReferralStatus();
+    document.getElementById('overlay').classList.add('open');
+    if(box)box.classList.add('open');
+  };
+  window.closeReferral=function(){
+    const box=document.getElementById('referralBox');
+    if(box)box.classList.remove('open');
+    document.getElementById('overlay').classList.remove('open');
+  };
+  window.setReferralStatus=function(){
+    const el=document.getElementById('referralStatus');
+    const account=currentAccount();
+    if(!el)return;
+    el.textContent=account&&account.foodReferrerDiscount
+      ?'✓ Your 15% OFF on Food is active because you shared your referral link.'
+      :'Share your own referral link to unlock your 15% OFF on Food.';
+  };
+
+  window.shareFoodReferral=function(){
+    if(!requireAccount())return;
+    const code=window.getReferralCode();
+    const url=PUBLIC_URL+'?ref='+encodeURIComponent(code)+'&mode=food';
+    const text='EM India referral link: '+url;
+    const sharedSuccessfully=()=>{
+      activateOwnBenefit();
+      refresh();
+      if(typeof window.showToast==='function')window.showToast('Referral link shared. Your 15% Food discount is now active.');
+    };
+    if(navigator.share){
+      navigator.share({title:'EM India Referral',text,url}).then(sharedSuccessfully).catch(()=>{});
+      return;
+    }
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(url).then(()=>{
+        sharedSuccessfully();
+        if(typeof window.showToast==='function')window.showToast('Referral link copied. Your 15% Food discount is now active.');
+      }).catch(()=>{
+        window.open('https://wa.me/?text='+encodeURIComponent(text),'_blank');
+        sharedSuccessfully();
+      });
+      return;
+    }
+    window.open('https://wa.me/?text='+encodeURIComponent(text),'_blank');
+    sharedSuccessfully();
+  };
+
+  // Opening a referral link is tracking only. Never grant any discount to the recipient.
+  window.applyReferralFromLink=function(){
+    const params=new URLSearchParams(location.search);
+    const ref=(params.get('ref')||'').trim().toUpperCase();
+    const mode=(params.get('mode')||'').trim().toLowerCase();
+    if(ref&&/^EM[A-Z0-9]{4,20}$/.test(ref)&&mode==='food'){
+      localStorage.setItem('emIndiaIncomingReferralCode',ref);
+      localStorage.setItem('emIndiaIncomingReferralMode','food');
+      localStorage.setItem('emIndiaIncomingReferralAt',new Date().toISOString());
+    }
+    localStorage.removeItem('emIndiaAppliedReferralCode');
+    localStorage.removeItem('emIndiaReferralAppliedAt');
+    if(typeof window.updateCart==='function')window.updateCart();
+  };
+
+  // Disable manual application: referral codes cannot give a recipient a discount.
+  window.applyReferralCode=function(){
+    if(typeof window.showToast==='function')window.showToast('Opening or applying a referral code does not give the recipient a discount.');
+  };
+
+  // Keep combo orders free from referral discount.
+  window.orderComboDirectlyOnWhatsApp=function(){
+    const message=`Hello EM India, I want to order the ₹1499 Limited Time Combo:
+
+${COMBO_NAME}
+
+Please confirm my order. Thank you!`;
+    window.location.href='https://wa.me/'+WHATSAPP_NUMBER+'?text='+encodeURIComponent(message);
+  };
+  window.addComboToCart=function(){window.orderComboDirectlyOnWhatsApp();};
+
+  window.updateAccountUI=function(){
+    const account=currentAccount();
+    const label=document.querySelector('.account strong');
+    const muted=document.querySelector('.account .muted');
+    if(account){
+      if(muted)muted.textContent='Welcome, '+(account.name||'User');
+      if(label)label.textContent='My Account';
+    }
+  };
+
   window.applyReferralFromLink();
-  window.orderTypeOnWhatsApp=function(type){if(!requireAccount())return;const items=cartItems.filter(item=>item.type===type);if(!items.length)return;const totals=cartSummaryFor(items);const list=items.map((item,i)=>`${i+1}. ${item.name}\n   Quantity: ${item.qty}\n   Price: ₹${item.unitPrice} each\n   Item Total: ₹${item.unitPrice*item.qty}`).join('\n\n');const discountLine=totals.discount?`\nYour 15% Food Referral Discount: -₹${totals.discount}`:'';const message=`Hello EM India, I want to order the following items:\n\n${list}\n\nSubtotal: ₹${totals.subtotal}${discountLine}\nTotal Payable: ₹${totals.total}\n\nPlease confirm my order. Thank you!`;const acc=currentAccount();acc.history=acc.history||[];acc.history.unshift({date:new Date().toLocaleString(),summary:items.map(x=>x.name+' × '+x.qty).join(', '),total:totals.total});acc.cart=cartItems.filter(item=>item.type!==type);saveCurrent(acc);renderHistory();window.location.href='https://wa.me/'+WHATSAPP_NUMBER+'?text='+encodeURIComponent(message);};
-  window.orderComboDirectlyOnWhatsApp=function(){if(!requireAccount())return;const ref=localStorage.getItem('emIndiaIncomingReferralCode')||'';const mode=localStorage.getItem('emIndiaIncomingReferralMode')||'';const line=mode==='combo'&&ref?`\nCombo Referral Code: ${ref}\nCashback Tracking: ₹100` : '';const message=`Hello EM India, I want to order the ₹1499 Family Kit Combo.${line}\n\nPlease confirm my order. Thank you!`;const acc=currentAccount();acc.history=acc.history||[];acc.history.unshift({date:new Date().toLocaleString(),summary:'Family Kit Combo',total:1499});saveCurrent(acc);renderHistory();window.location.href='https://wa.me/'+WHATSAPP_NUMBER+'?text='+encodeURIComponent(message);};
-  document.addEventListener('DOMContentLoaded',()=>{updateAccountUI();loadCartForAccount();updateCart();});
-})();
-</script>
-<script>
-/* LOGIN FIX: explicit button handlers + migration of older single-account data */
-(function(){
-  const ACCOUNTS_KEY='emIndiaAccountsV2', CURRENT_KEY='emIndiaCurrentUserV2';
-  function accounts(){try{return JSON.parse(localStorage.getItem(ACCOUNTS_KEY)||'{}')}catch(e){return {}}}
-  function save(a){localStorage.setItem(ACCOUNTS_KEY,JSON.stringify(a));}
-  function migrateOld(){
-    try{
-      const old=JSON.parse(localStorage.getItem('emIndiaUserAccount')||'null');
-      if(old&&old.email){
-        const a=accounts(), email=String(old.email).trim().toLowerCase();
-        if(!a[email]){
-          a[email]={name:old.name||'',email:email,password:old.password||'',cart:[],history:[],referralCode:'',foodReferrerDiscount:false};
-          save(a);
-        }
-      }
-    }catch(e){}
-  }
-  function getCurrent(){const a=accounts(), email=localStorage.getItem(CURRENT_KEY)||'';return a[email]||null;}
-  function create(){
-    const name=(document.getElementById('accountName').value||'').trim();
-    const email=(document.getElementById('accountEmail').value||'').trim().toLowerCase();
-    const password=document.getElementById('accountPassword').value||'';
-    const status=document.getElementById('accountStatus');
-    if(!name||!email||!password){status.textContent='Please complete all account details.';return;}
-    if(!/^\S+@\S+\.\S+$/.test(email)){status.textContent='Please enter a valid email address.';return;}
-    const a=accounts();
-    if(a[email] && a[email].password!==password){status.textContent='An account already exists with this email. Please use the correct password to log in.';return;}
-    a[email]=Object.assign({name,email,password,cart:[],history:[],referralCode:'',foodReferrerDiscount:false},a[email]||{}, {name,email,password});
-    save(a); localStorage.setItem(CURRENT_KEY,email);
-    localStorage.setItem('emIndiaUserAccount',JSON.stringify(a[email]));
-    if(typeof loadCartForAccount==='function') loadCartForAccount();
-    if(typeof updateAccountUI==='function') updateAccountUI();
-    if(typeof renderHistory==='function') renderHistory();
-    if(typeof updateCart==='function') updateCart();
-    status.textContent='Account created successfully. Your account is now logged in.';
-    if(typeof showToast==='function') showToast('Account created successfully');
-  }
-  function login(){
-    migrateOld();
-    const email=(document.getElementById('accountEmail').value||'').trim().toLowerCase();
-    const password=document.getElementById('accountPassword').value||'';
-    const status=document.getElementById('accountStatus'); const a=accounts(), acc=a[email];
-    if(!email||!password){status.textContent='Please enter your email and password.';return;}
-    if(!acc){status.textContent='No account found with this email. Please create an account first.';return;}
-    if(acc.password!==password){status.textContent='Incorrect password. Please try again.';return;}
-    localStorage.setItem(CURRENT_KEY,email);
-    localStorage.setItem('emIndiaUserAccount',JSON.stringify(acc));
-    if(typeof loadCartForAccount==='function') loadCartForAccount();
-    if(typeof updateAccountUI==='function') updateAccountUI();
-    if(typeof renderHistory==='function') renderHistory();
-    if(typeof updateCart==='function') updateCart();
-    status.textContent='Login successful. Your cart and order history have been restored.';
-    if(typeof showToast==='function') showToast('Login successful');
-    setTimeout(()=>{if(typeof closeAll==='function')closeAll();},500);
-  }
-  function bind(){
-    migrateOld();
-    const buttons=document.querySelectorAll('#loginBox .login-submit');
-    if(buttons[0]) buttons[0].onclick=function(){create();return false;};
-    if(buttons[1]) buttons[1].onclick=function(){login();return false;};
-    window.createAccount=create; window.loginAccount=login;
-  }
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',bind); else bind();
 })();
 </script>
 
-<!-- Firebase Authentication: real email/password login + actual password reset email -->
 <script type="module">
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
 import {
@@ -796,6 +643,7 @@ function friendlyError(error){
   if(code==='auth/too-many-requests') return 'Too many attempts. Please wait a moment and try again.';
   if(code==='auth/network-request-failed') return 'Network error. Please check your internet connection and try again.';
   if(code==='auth/operation-not-allowed') return 'Email/Password sign-in is not enabled in Firebase yet.';
+  if(code==='auth/unauthorized-continue-uri') return 'Password reset is not configured for this website URL yet. Add em-indiacvstore.vercel.app to Firebase Authorized domains.';
   return (error && error.message) ? error.message : 'Something went wrong. Please try again.';
 }
 function restoreLocalAccount(email, name=''){
@@ -859,8 +707,11 @@ window.resetPassword = async function(){
   if(!email){ setStatus('Enter your registered email first, then tap FORGOT PASSWORD.', true); return; }
   setStatus('Sending password reset email...');
   try{
-    await sendPasswordResetEmail(auth,email);
-    setStatus('Password reset email sent. Check your inbox and spam folder, then open the link to set a new password.');
+    await sendPasswordResetEmail(auth,email,{
+      url:'https://em-indiacvstore.vercel.app/',
+      handleCodeInApp:false
+    });
+    setStatus('Password reset email sent. Check Inbox, Spam and Promotions, then open the Firebase link to set a new password.');
     if(typeof window.showToast==='function') window.showToast('Password reset email sent');
   }catch(error){ setStatus(friendlyError(error), true); }
 };
