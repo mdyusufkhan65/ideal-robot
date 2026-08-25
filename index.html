@@ -182,6 +182,16 @@ footer{background:#073c18;color:#fff;display:grid;grid-template-columns:2fr 1fr 
   <input type="password" id="accountPassword" placeholder="Create password">
   <button class="login-submit" onclick="createAccount()">CREATE ACCOUNT</button>
   <button class="login-submit" style="margin-top:8px" onclick="loginAccount()">LOGIN</button>
+  <button class="login-submit" id="forgotPasswordBtn" type="button" style="margin-top:8px;background:#d55a20" onclick="resetPassword()">FORGOT PASSWORD?</button>
+  <p style="font-size:11px;color:#777;margin:8px 0 0;text-align:center">Enter your registered email above and we will send a password reset link to that email.</p>
+  <div style="display:flex;align-items:center;gap:10px;margin:16px 0 8px;color:#777;font-size:11px"><span style="height:1px;background:#ddd;flex:1"></span><b>OR LOGIN WITH PHONE</b><span style="height:1px;background:#ddd;flex:1"></span></div>
+  <input type="tel" id="phoneNumber" placeholder="Phone number e.g. +91 9876543210" inputmode="tel">
+  <button class="login-submit" id="sendOtpBtn" type="button" style="margin-top:8px;background:#0c5b28" onclick="sendPhoneOTP()">SEND OTP</button>
+  <div id="phoneOtpArea" style="display:none;margin-top:8px">
+    <input type="text" id="phoneOtp" placeholder="Enter 6-digit OTP" inputmode="numeric" maxlength="6">
+    <button class="login-submit" id="verifyOtpBtn" type="button" style="margin-top:8px;background:#0c5b28" onclick="verifyPhoneOTP()">VERIFY OTP &amp; LOGIN</button>
+  </div>
+  <div id="phoneRecaptchaContainer"></div>
   <p id="accountStatus" style="font-size:12px;color:#666;margin-top:10px"></p><div id="accountHistory" style="margin-top:12px;max-height:180px;overflow:auto;font-size:12px;color:#444"></div>
 </div>
 
@@ -740,5 +750,216 @@ function shareReferral(){
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',bind); else bind();
 })();
 </script>
+
+<!-- Firebase Authentication: real email/password login + actual password reset email -->
+<script type="module">
+import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import {
+  getAuth,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+  updateProfile,
+  onAuthStateChanged,
+  RecaptchaVerifier,
+  signInWithPhoneNumber
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+
+/* Firebase configuration copied from the Firebase Web App configuration shown for em-indiacvstore. */
+const firebaseConfig = {
+  apiKey: "AIzaSyDTi4-CmLcPtpLhkUqRI9ayhzZkLqH-d2Y",
+  authDomain: "em-indiacvstore.firebaseapp.com",
+  projectId: "em-indiacvstore"
+};
+
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const ACCOUNTS_KEY = 'emIndiaAccountsV2';
+const CURRENT_KEY = 'emIndiaCurrentUserV2';
+
+function readAccounts(){
+  try { return JSON.parse(localStorage.getItem(ACCOUNTS_KEY) || '{}'); }
+  catch(e){ return {}; }
+}
+function writeAccounts(accounts){ localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts)); }
+function setStatus(message, isError=false){
+  const el=document.getElementById('accountStatus');
+  if(el){ el.textContent=message; el.style.color=isError ? '#b42318' : '#176b2c'; }
+}
+function friendlyError(error){
+  const code=(error && error.code) || '';
+  if(code==='auth/email-already-in-use') return 'This email already has an account. Please use LOGIN or Forgot Password.';
+  if(code==='auth/invalid-email') return 'Please enter a valid email address.';
+  if(code==='auth/weak-password') return 'Password must contain at least 6 characters.';
+  if(code==='auth/invalid-credential' || code==='auth/wrong-password') return 'Incorrect email or password.';
+  if(code==='auth/user-not-found') return 'No Firebase account was found with this email. Please create an account first.';
+  if(code==='auth/too-many-requests') return 'Too many attempts. Please wait a moment and try again.';
+  if(code==='auth/network-request-failed') return 'Network error. Please check your internet connection and try again.';
+  if(code==='auth/operation-not-allowed') return 'Email/Password sign-in is not enabled in Firebase yet.';
+  return (error && error.message) ? error.message : 'Something went wrong. Please try again.';
+}
+function restoreLocalAccount(email, name=''){
+  const accounts=readAccounts();
+  const old=accounts[email] || {};
+  accounts[email]={
+    name: name || old.name || '',
+    email,
+    cart: Array.isArray(old.cart) ? old.cart : [],
+    history: Array.isArray(old.history) ? old.history : [],
+    referralCode: old.referralCode || '',
+    foodReferrerDiscount: !!old.foodReferrerDiscount
+  };
+  writeAccounts(accounts);
+  localStorage.setItem(CURRENT_KEY,email);
+  localStorage.setItem('emIndiaUserAccount',JSON.stringify(accounts[email]));
+  return accounts[email];
+}
+function refreshWebsiteAccount(){
+  try{ if(typeof window.loadCartForAccount==='function') window.loadCartForAccount(); }catch(e){}
+  try{ if(typeof window.updateAccountUI==='function') window.updateAccountUI(); }catch(e){}
+  try{ if(typeof window.renderHistory==='function') window.renderHistory(); }catch(e){}
+  try{ if(typeof window.updateCart==='function') window.updateCart(); }catch(e){}
+}
+
+window.createAccount = async function(){
+  const name=(document.getElementById('accountName').value||'').trim();
+  const email=(document.getElementById('accountEmail').value||'').trim().toLowerCase();
+  const password=document.getElementById('accountPassword').value||'';
+  if(!name || !email || !password){ setStatus('Please complete your full name, email and password.', true); return; }
+  if(password.length<6){ setStatus('Password must contain at least 6 characters.', true); return; }
+  setStatus('Creating your Firebase account...');
+  try{
+    const result=await createUserWithEmailAndPassword(auth,email,password);
+    if(name) await updateProfile(result.user,{displayName:name});
+    restoreLocalAccount(email,name);
+    refreshWebsiteAccount();
+    setStatus('Account created successfully. You are now logged in.');
+    if(typeof window.showToast==='function') window.showToast('Account created successfully');
+    setTimeout(()=>{ try{ if(typeof window.closeAll==='function') window.closeAll(); }catch(e){} },700);
+  }catch(error){ setStatus(friendlyError(error), true); }
+};
+
+window.loginAccount = async function(){
+  const email=(document.getElementById('accountEmail').value||'').trim().toLowerCase();
+  const password=document.getElementById('accountPassword').value||'';
+  if(!email || !password){ setStatus('Please enter your registered email and password.', true); return; }
+  setStatus('Logging in...');
+  try{
+    const result=await signInWithEmailAndPassword(auth,email,password);
+    restoreLocalAccount(email,result.user.displayName||'');
+    refreshWebsiteAccount();
+    setStatus('Login successful. Your cart and order history are restored.');
+    if(typeof window.showToast==='function') window.showToast('Login successful');
+    setTimeout(()=>{ try{ if(typeof window.closeAll==='function') window.closeAll(); }catch(e){} },700);
+  }catch(error){ setStatus(friendlyError(error), true); }
+};
+
+window.resetPassword = async function(){
+  const email=(document.getElementById('accountEmail').value||'').trim().toLowerCase();
+  if(!email){ setStatus('Enter your registered email first, then tap FORGOT PASSWORD.', true); return; }
+  setStatus('Sending password reset email...');
+  try{
+    await sendPasswordResetEmail(auth,email);
+    setStatus('Password reset email sent. Check your inbox and spam folder, then open the link to set a new password.');
+    if(typeof window.showToast==='function') window.showToast('Password reset email sent');
+  }catch(error){ setStatus(friendlyError(error), true); }
+};
+
+let phoneConfirmationResult=null;
+let phoneRecaptchaVerifier=null;
+
+function normalizePhoneNumber(value){
+  let phone=String(value||'').trim().replace(/[\s\-()]/g,'');
+  if(!phone) return '';
+  if(phone.startsWith('00')) phone='+'+phone.slice(2);
+  if(!phone.startsWith('+')){
+    if(/^\d{10}$/.test(phone)) phone='+91'+phone;
+    else phone='+'+phone;
+  }
+  return phone;
+}
+function phoneAccountKey(phone){ return 'phone-'+String(phone||'').replace(/\D/g,'')+'@phone.emindia.local'; }
+function restorePhoneAccount(phone,name=''){
+  const key=phoneAccountKey(phone);
+  const accounts=readAccounts();
+  const old=accounts[key]||{};
+  accounts[key]={
+    name:name||old.name||'Phone User',
+    email:key,
+    phone:phone,
+    cart:Array.isArray(old.cart)?old.cart:[],
+    history:Array.isArray(old.history)?old.history:[],
+    referralCode:old.referralCode||'',
+    foodReferrerDiscount:!!old.foodReferrerDiscount
+  };
+  writeAccounts(accounts);
+  localStorage.setItem(CURRENT_KEY,key);
+  localStorage.setItem('emIndiaUserAccount',JSON.stringify(accounts[key]));
+  return accounts[key];
+}
+function getPhoneRecaptcha(){
+  if(phoneRecaptchaVerifier) return phoneRecaptchaVerifier;
+  const container=document.getElementById('phoneRecaptchaContainer');
+  if(!container) throw new Error('Phone verification is not ready. Please reopen the login box.');
+  phoneRecaptchaVerifier=new RecaptchaVerifier(auth,'phoneRecaptchaContainer',{
+    size:'invisible',
+    callback:()=>{}
+  });
+  return phoneRecaptchaVerifier;
+}
+window.sendPhoneOTP=async function(){
+  const phone=normalizePhoneNumber(document.getElementById('phoneNumber').value||'');
+  if(!/^\+\d{8,15}$/.test(phone)){
+    setStatus('Enter a valid phone number with country code, for example +91 9876543210.',true); return;
+  }
+  setStatus('Preparing security verification...');
+  try{
+    const verifier=getPhoneRecaptcha();
+    phoneConfirmationResult=await signInWithPhoneNumber(auth,phone,verifier);
+    document.getElementById('phoneOtpArea').style.display='block';
+    setStatus('OTP sent to '+phone+'. Enter the 6-digit code to continue.');
+    if(typeof window.showToast==='function') window.showToast('OTP sent successfully');
+    setTimeout(()=>document.getElementById('phoneOtp')?.focus(),100);
+  }catch(error){
+    if(phoneRecaptchaVerifier){ try{phoneRecaptchaVerifier.clear();}catch(e){} phoneRecaptchaVerifier=null; }
+    const code=(error&&error.code)||'';
+    if(code==='auth/invalid-phone-number') setStatus('Invalid phone number. Use full format, for example +91 9876543210.',true);
+    else if(code==='auth/operation-not-allowed') setStatus('Phone Number sign-in is not enabled in Firebase.',true);
+    else if(code==='auth/captcha-check-failed') setStatus('Security verification failed. Please try SEND OTP again.',true);
+    else if(code==='auth/too-many-requests') setStatus('Too many OTP attempts. Please wait and try again later.',true);
+    else setStatus(friendlyError(error),true);
+  }
+};
+window.verifyPhoneOTP=async function(){
+  const otp=(document.getElementById('phoneOtp').value||'').trim();
+  if(!phoneConfirmationResult){ setStatus('Please send OTP first.',true); return; }
+  if(!/^\d{6}$/.test(otp)){ setStatus('Enter the 6-digit OTP.',true); return; }
+  setStatus('Verifying OTP...');
+  try{
+    const result=await phoneConfirmationResult.confirm(otp);
+    const phone=result.user.phoneNumber||normalizePhoneNumber(document.getElementById('phoneNumber').value||'');
+    restorePhoneAccount(phone,result.user.displayName||'Phone User');
+    refreshWebsiteAccount();
+    setStatus('Phone number verified. Login successful and your account is ready.');
+    if(typeof window.showToast==='function') window.showToast('Phone login successful');
+    setTimeout(()=>{ try{ if(typeof window.closeAll==='function') window.closeAll(); }catch(e){} },700);
+  }catch(error){
+    const code=(error&&error.code)||'';
+    if(code==='auth/invalid-verification-code') setStatus('Incorrect OTP. Please check the code and try again.',true);
+    else if(code==='auth/code-expired') setStatus('OTP expired. Please send a new OTP.',true);
+    else setStatus(friendlyError(error),true);
+  }
+};
+
+onAuthStateChanged(auth,(user)=>{
+  if(!user){ return; }
+  const email=(user.email||'').trim().toLowerCase();
+  if(email) restoreLocalAccount(email,user.displayName||'');
+  else if(user.phoneNumber) restorePhoneAccount(user.phoneNumber,user.displayName||'Phone User');
+  else return;
+  refreshWebsiteAccount();
+});
+</script>
+
 </body>
 </html>
