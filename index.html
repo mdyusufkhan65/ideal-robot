@@ -201,10 +201,9 @@ footer{background:#073c18;color:#fff;display:grid;grid-template-columns:2fr 1fr 
   <p>Share your personal referral link to unlock your own 15% OFF on Food.</p>
   <div class="ref-code" id="referralCode">Loading...</div>
   <div class="referral-actions" style="display:grid;grid-template-columns:1fr;gap:8px">
-    <button class="ref-share" onclick="shareFoodReferral()">SHARE REFERRAL LINK — GET 15% OFF ON FOOD</button>
+    <button class="ref-share" onclick="shareFoodReferral()">SHARE FOOD REFERRAL — GET 15% OFF ON FOOD</button>
+    <button class="ref-share" style="background:#b30d08" onclick="shareComboReferral()">SHARE COMBO REFERRAL — GET ₹100 COMBO CASHBACK</button>
   </div>
-  <p style="font-size:12px;color:#666;margin-top:12px"><b>Referral rule:</b> only the account that shares its own link receives the 15% Food discount. The person opening the link receives no discount.</p>
-  <p style="font-size:12px;color:#666"><b>Chain referral:</b> if the person who opened your link later creates/logs into their own account and shares their own referral link, they unlock their own 15% Food discount. This can continue from user to user.</p>
   <div class="ref-status" id="referralStatus"></div>
 </div>
 <div class="toast" id="toast"></div>
@@ -473,11 +472,19 @@ updateCart();
     }
     return account.referralCode;
   }
-  function activateOwnBenefit(){
+  function activateOwnBenefit(mode){
     const account=currentAccount();
     if(!account)return false;
-    account.foodReferrerDiscount=true;
-    account.foodReferrerDiscountActivatedAt=new Date().toISOString();
+    const now=new Date().toISOString();
+    if(mode==='combo'){
+      account.comboReferralCashback=100;
+      account.comboReferralCashbackActivatedAt=now;
+      account.ownComboReferralSharedAt=now;
+    } else {
+      account.foodReferrerDiscount=true;
+      account.foodReferrerDiscountActivatedAt=now;
+      account.ownFoodReferralSharedAt=now;
+    }
     saveCurrentAccount(account);
     return true;
   }
@@ -488,13 +495,32 @@ updateCart();
   }
 
   // Remove every old recipient-discount flag so a person who only opens a link can never get a discount.
-  ['emIndiaAppliedReferralCode','emIndiaReferralAppliedAt','emIndiaIncomingReferralDiscount','emIndiaReferralDiscount'].forEach(k=>localStorage.removeItem(k));
+  ['emIndiaAppliedReferralCode','emIndiaReferralAppliedAt','emIndiaIncomingReferralDiscount','emIndiaReferralDiscount','emIndiaIncomingReferralCashback'].forEach(k=>localStorage.removeItem(k));
+
+  // Legacy builds could mark a recipient as rewarded without that account actually sharing a link.
+  // Only the explicit self-share timestamps below count as a valid referral reward.
+  (function clearLegacyReferralBenefits(){
+    const account=currentAccount();
+    if(!account)return;
+    let changed=false;
+    if(account.foodReferrerDiscount&&!account.ownFoodReferralSharedAt){
+      account.foodReferrerDiscount=false;
+      delete account.foodReferrerDiscountActivatedAt;
+      changed=true;
+    }
+    if(Number(account.comboReferralCashback||0)>0&&!account.ownComboReferralSharedAt){
+      account.comboReferralCashback=0;
+      delete account.comboReferralCashbackActivatedAt;
+      changed=true;
+    }
+    if(changed)saveCurrentAccount(account);
+  })();
 
   window.cartSummaryFor=function(items){
     const subtotal=items.reduce((sum,item)=>sum+(Number(item.unitPrice)||0)*(Number(item.qty)||0),0);
     const foodSubtotal=items.filter(item=>item.type==='food').reduce((sum,item)=>sum+(Number(item.unitPrice)||0)*(Number(item.qty)||0),0);
     const account=currentAccount();
-    const hasOwnBenefit=!!(account&&account.foodReferrerDiscount);
+    const hasOwnBenefit=!!(account&&account.foodReferrerDiscount&&account.ownFoodReferralSharedAt);
     const discount=hasOwnBenefit?Math.round(foodSubtotal*0.15):0;
     return {subtotal,foodSubtotal,discount,total:Math.max(0,subtotal-discount),appliedReferral:hasOwnBenefit?'YOUR REFERRAL SHARE BENEFIT':''};
   };
@@ -521,47 +547,67 @@ updateCart();
     const el=document.getElementById('referralStatus');
     const account=currentAccount();
     if(!el)return;
-    el.textContent=account&&account.foodReferrerDiscount
-      ?'✓ Your 15% OFF on Food is active because you shared your referral link.'
-      :'Share your own referral link to unlock your 15% OFF on Food.';
+    const foodActive=!!(account&&account.foodReferrerDiscount&&account.ownFoodReferralSharedAt);
+    const comboActive=!!(account&&Number(account.comboReferralCashback||0)>0&&account.ownComboReferralSharedAt);
+    const lines=[];
+    if(foodActive)lines.push('✓ 15% OFF on Food unlocked');
+    if(comboActive)lines.push('✓ ₹100 Combo cashback unlocked');
+    el.innerHTML=lines.join('<br>');
   };
 
-  window.shareFoodReferral=function(){
+  async function copyOrOpenShare(text,url){
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      try{await navigator.clipboard.writeText(url);return 'copied';}catch(e){}
+    }
+    try{
+      window.open('https://wa.me/?text='+encodeURIComponent(text),'_blank','noopener');
+      return 'whatsapp';
+    }catch(e){
+      window.prompt('Copy your referral link:',url);
+      return 'prompt';
+    }
+  }
+
+  async function shareReferral(mode){
     if(!requireAccount())return;
     const code=window.getReferralCode();
-    const url=PUBLIC_URL+'?ref='+encodeURIComponent(code)+'&mode=food';
-    const text='EM India referral link: '+url;
-    const sharedSuccessfully=()=>{
-      activateOwnBenefit();
-      refresh();
-      if(typeof window.showToast==='function')window.showToast('Referral link shared. Your 15% Food discount is now active.');
-    };
+    const label=mode==='combo'?'Combo':'Food';
+    const reward=mode==='combo'?'₹100 Combo cashback':'15% OFF on Food';
+    const url=PUBLIC_URL+'?ref='+encodeURIComponent(code)+'&mode='+encodeURIComponent(mode);
+    const text='EM India '+label+' referral link: '+url;
+    let success=false;
     if(navigator.share){
-      navigator.share({title:'EM India Referral',text,url}).then(sharedSuccessfully).catch(()=>{});
-      return;
+      try{
+        await navigator.share({title:'EM India '+label+' Referral',text,url});
+        success=true;
+      }catch(e){
+        // Cancel/unsupported share sheets must fall back instead of doing nothing.
+      }
     }
-    if(navigator.clipboard&&navigator.clipboard.writeText){
-      navigator.clipboard.writeText(url).then(()=>{
-        sharedSuccessfully();
-        if(typeof window.showToast==='function')window.showToast('Referral link copied. Your 15% Food discount is now active.');
-      }).catch(()=>{
-        window.open('https://wa.me/?text='+encodeURIComponent(text),'_blank');
-        sharedSuccessfully();
-      });
-      return;
+    if(!success){
+      const method=await copyOrOpenShare(text,url);
+      success=!!method;
+      if(method==='copied'&&typeof window.showToast==='function')window.showToast(label+' referral link copied. '+reward+' is now active.');
+      else if(method==='whatsapp'&&typeof window.showToast==='function')window.showToast('Choose a WhatsApp contact to share your '+label+' referral. '+reward+' is now active.');
     }
-    window.open('https://wa.me/?text='+encodeURIComponent(text),'_blank');
-    sharedSuccessfully();
-  };
+    if(success){
+      activateOwnBenefit(mode);
+      refresh();
+      if(typeof window.showToast==='function' && navigator.share)window.showToast(label+' referral shared. '+reward+' is now active.');
+    }
+  }
 
-  // Opening a referral link is tracking only. Never grant any discount to the recipient.
+  window.shareFoodReferral=function(){return shareReferral('food');};
+  window.shareComboReferral=function(){return shareReferral('combo');};
+
+  // Opening a referral link is tracking only. Never grant any discount or cashback to the recipient.
   window.applyReferralFromLink=function(){
     const params=new URLSearchParams(location.search);
     const ref=(params.get('ref')||'').trim().toUpperCase();
     const mode=(params.get('mode')||'').trim().toLowerCase();
-    if(ref&&/^EM[A-Z0-9]{4,20}$/.test(ref)&&mode==='food'){
+    if(ref&&/^EM[A-Z0-9]{4,20}$/.test(ref)&&(mode==='food'||mode==='combo')){
       localStorage.setItem('emIndiaIncomingReferralCode',ref);
-      localStorage.setItem('emIndiaIncomingReferralMode','food');
+      localStorage.setItem('emIndiaIncomingReferralMode',mode);
       localStorage.setItem('emIndiaIncomingReferralAt',new Date().toISOString());
     }
     localStorage.removeItem('emIndiaAppliedReferralCode');
@@ -574,11 +620,16 @@ updateCart();
     if(typeof window.showToast==='function')window.showToast('Opening or applying a referral code does not give the recipient a discount.');
   };
 
-  // Keep combo orders free from referral discount.
+  // Combo referral cashback belongs only to the account that shared its own Combo referral link.
   window.orderComboDirectlyOnWhatsApp=function(){
+    const account=currentAccount();
+    const comboCashback=Number(account&&account.comboReferralCashback||0);
+    const rewardLine=comboCashback>0?`
+
+My earned Combo referral cashback: ${formatPrice(comboCashback)} (please apply/confirm eligibility).`:'';
     const message=`Hello EM India, I want to order the ₹1499 Limited Time Combo:
 
-${COMBO_NAME}
+${COMBO_NAME}${rewardLine}
 
 Please confirm my order. Thank you!`;
     window.location.href='https://wa.me/'+WHATSAPP_NUMBER+'?text='+encodeURIComponent(message);
