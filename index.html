@@ -476,6 +476,7 @@ updateCart();
     const account=currentAccount();
     if(!account)return false;
     const now=new Date().toISOString();
+    account.referralRewardVersion=3;
     if(mode==='combo'){
       account.comboReferralCashback=100;
       account.comboReferralCashbackActivatedAt=now;
@@ -497,30 +498,32 @@ updateCart();
   // Remove every old recipient-discount flag so a person who only opens a link can never get a discount.
   ['emIndiaAppliedReferralCode','emIndiaReferralAppliedAt','emIndiaIncomingReferralDiscount','emIndiaReferralDiscount','emIndiaIncomingReferralCashback'].forEach(k=>localStorage.removeItem(k));
 
-  // Legacy builds could mark a recipient as rewarded without that account actually sharing a link.
-  // Only the explicit self-share timestamps below count as a valid referral reward.
-  (function clearLegacyReferralBenefits(){
-    const account=currentAccount();
-    if(!account)return;
+  // Reset referral rewards created by older buggy builds. Only rewards earned by this fixed build
+  // (referralRewardVersion 3) are allowed to stay active. This runs once per saved account.
+  (function resetOldReferralRewards(){
+    const accounts=readAccounts();
     let changed=false;
-    if(account.foodReferrerDiscount&&!account.ownFoodReferralSharedAt){
-      account.foodReferrerDiscount=false;
-      delete account.foodReferrerDiscountActivatedAt;
-      changed=true;
-    }
-    if(Number(account.comboReferralCashback||0)>0&&!account.ownComboReferralSharedAt){
-      account.comboReferralCashback=0;
-      delete account.comboReferralCashbackActivatedAt;
-      changed=true;
-    }
-    if(changed)saveCurrentAccount(account);
+    Object.keys(accounts).forEach(key=>{
+      const a=accounts[key];
+      if(Number(a.referralRewardVersion||0)!==3){
+        a.foodReferrerDiscount=false;
+        a.comboReferralCashback=0;
+        delete a.ownFoodReferralSharedAt;
+        delete a.foodReferrerDiscountActivatedAt;
+        delete a.ownComboReferralSharedAt;
+        delete a.comboReferralCashbackActivatedAt;
+        a.referralRewardVersion=3;
+        changed=true;
+      }
+    });
+    if(changed)writeAccounts(accounts);
   })();
 
   window.cartSummaryFor=function(items){
     const subtotal=items.reduce((sum,item)=>sum+(Number(item.unitPrice)||0)*(Number(item.qty)||0),0);
     const foodSubtotal=items.filter(item=>item.type==='food').reduce((sum,item)=>sum+(Number(item.unitPrice)||0)*(Number(item.qty)||0),0);
     const account=currentAccount();
-    const hasOwnBenefit=!!(account&&account.foodReferrerDiscount&&account.ownFoodReferralSharedAt);
+    const hasOwnBenefit=!!(account&&Number(account.referralRewardVersion||0)===3&&account.foodReferrerDiscount&&account.ownFoodReferralSharedAt);
     const discount=hasOwnBenefit?Math.round(foodSubtotal*0.15):0;
     return {subtotal,foodSubtotal,discount,total:Math.max(0,subtotal-discount),appliedReferral:hasOwnBenefit?'YOUR REFERRAL SHARE BENEFIT':''};
   };
@@ -547,68 +550,99 @@ updateCart();
     const el=document.getElementById('referralStatus');
     const account=currentAccount();
     if(!el)return;
-    const foodActive=!!(account&&account.foodReferrerDiscount&&account.ownFoodReferralSharedAt);
-    const comboActive=!!(account&&Number(account.comboReferralCashback||0)>0&&account.ownComboReferralSharedAt);
+    const foodActive=!!(account&&Number(account.referralRewardVersion||0)===3&&account.foodReferrerDiscount&&account.ownFoodReferralSharedAt);
+    const comboActive=!!(account&&Number(account.referralRewardVersion||0)===3&&Number(account.comboReferralCashback||0)>0&&account.ownComboReferralSharedAt);
     const lines=[];
     if(foodActive)lines.push('✓ 15% OFF on Food unlocked');
     if(comboActive)lines.push('✓ ₹100 Combo cashback unlocked');
     el.innerHTML=lines.join('<br>');
   };
 
-  async function copyOrOpenShare(text,url){
+  async function copyReferralLink(url){
     if(navigator.clipboard&&navigator.clipboard.writeText){
-      try{await navigator.clipboard.writeText(url);return 'copied';}catch(e){}
+      try{await navigator.clipboard.writeText(url);return true;}catch(e){}
     }
-    try{
-      window.open('https://wa.me/?text='+encodeURIComponent(text),'_blank','noopener');
-      return 'whatsapp';
-    }catch(e){
-      window.prompt('Copy your referral link:',url);
-      return 'prompt';
-    }
+    const area=document.createElement('textarea');
+    area.value=url; area.setAttribute('readonly',''); area.style.position='fixed'; area.style.opacity='0';
+    document.body.appendChild(area); area.select();
+    let ok=false; try{ok=document.execCommand('copy');}catch(e){} area.remove();
+    if(ok)return true;
+    window.prompt('Copy your referral link:',url);
+    return false;
   }
 
   async function shareReferral(mode){
-    if(!requireAccount())return;
+    if(!requireAccount())return false;
     const code=window.getReferralCode();
     const label=mode==='combo'?'Combo':'Food';
     const reward=mode==='combo'?'₹100 Combo cashback':'15% OFF on Food';
     const url=PUBLIC_URL+'?ref='+encodeURIComponent(code)+'&mode='+encodeURIComponent(mode);
     const text='EM India '+label+' referral link: '+url;
-    let success=false;
+    let shared=false;
+    let method='';
+
     if(navigator.share){
       try{
         await navigator.share({title:'EM India '+label+' Referral',text,url});
-        success=true;
+        shared=true; method='native';
       }catch(e){
-        // Cancel/unsupported share sheets must fall back instead of doing nothing.
+        // If the share sheet is unavailable or cancelled, continue to the desktop fallback.
       }
     }
-    if(!success){
-      const method=await copyOrOpenShare(text,url);
-      success=!!method;
-      if(method==='copied'&&typeof window.showToast==='function')window.showToast(label+' referral link copied. '+reward+' is now active.');
-      else if(method==='whatsapp'&&typeof window.showToast==='function')window.showToast('Choose a WhatsApp contact to share your '+label+' referral. '+reward+' is now active.');
+
+    if(!shared){
+      const wa='https://wa.me/?text='+encodeURIComponent(text);
+      const popup=window.open(wa,'_blank');
+      if(popup){ shared=true; method='whatsapp'; }
     }
-    if(success){
+
+    if(!shared){
+      await copyReferralLink(url);
+      method='copied';
+      shared=true;
+    }
+
+    if(shared){
       activateOwnBenefit(mode);
       refresh();
-      if(typeof window.showToast==='function' && navigator.share)window.showToast(label+' referral shared. '+reward+' is now active.');
+      if(typeof window.showToast==='function'){
+        if(method==='whatsapp') window.showToast('WhatsApp opened. Choose a contact to send your '+label+' referral. '+reward+' unlocked.');
+        else if(method==='copied') window.showToast(label+' referral link copied. '+reward+' unlocked.');
+        else window.showToast(label+' referral shared. '+reward+' unlocked.');
+      }
+      return true;
     }
+    return false;
   }
 
   window.shareFoodReferral=function(){return shareReferral('food');};
   window.shareComboReferral=function(){return shareReferral('combo');};
 
-  // Opening a referral link is tracking only. Never grant any discount or cashback to the recipient.
+  // Opening a referral link never grants the recipient a reward. It only starts a fresh recipient session.
   window.applyReferralFromLink=function(){
     const params=new URLSearchParams(location.search);
     const ref=(params.get('ref')||'').trim().toUpperCase();
     const mode=(params.get('mode')||'').trim().toLowerCase();
     if(ref&&/^EM[A-Z0-9]{4,20}$/.test(ref)&&(mode==='food'||mode==='combo')){
+      const token=ref+'|'+mode;
+      if(sessionStorage.getItem('emIndiaReferralLinkHandled')===token) return;
+      sessionStorage.setItem('emIndiaReferralLinkHandled',token);
       localStorage.setItem('emIndiaIncomingReferralCode',ref);
       localStorage.setItem('emIndiaIncomingReferralMode',mode);
       localStorage.setItem('emIndiaIncomingReferralAt',new Date().toISOString());
+      // Force Firebase sign-out as well. The module reads this flag even if it loads after this script.
+      localStorage.setItem('emIndiaForceReferralSignOut','1');
+      localStorage.removeItem(CURRENT_KEY);
+      localStorage.removeItem('emIndiaUserAccount');
+      if(typeof window.emIndiaReferralLinkSignOut==='function'){
+        Promise.resolve(window.emIndiaReferralLinkSignOut()).finally(()=>{
+          if(typeof window.updateAccountUI==='function')window.updateAccountUI();
+          if(typeof window.updateCart==='function')window.updateCart();
+        });
+      }
+      // Consume the referral URL so the recipient can create/login and refresh without being logged out again.
+      try{ history.replaceState({},document.title,location.pathname+location.hash); }catch(e){}
+      return;
     }
     localStorage.removeItem('emIndiaAppliedReferralCode');
     localStorage.removeItem('emIndiaReferralAppliedAt');
@@ -660,7 +694,8 @@ import {
   updateProfile,
   onAuthStateChanged,
   RecaptchaVerifier,
-  signInWithPhoneNumber
+  signInWithPhoneNumber,
+  signOut
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
 /* Firebase configuration copied from the Firebase Web App configuration shown for em-indiacvstore. */
@@ -672,6 +707,25 @@ const firebaseConfig = {
 
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
+// A referral link can be opened in the same browser as the sharer. Sign out Firebase BEFORE
+// registering the auth listener, otherwise the old sharer session can be restored and wrongly get the reward.
+const mustResetReferralSession = localStorage.getItem('emIndiaForceReferralSignOut')==='1';
+if(mustResetReferralSession){
+  try{ await signOut(auth); }catch(e){}
+  try{
+    localStorage.removeItem('emIndiaCurrentUserV2');
+    localStorage.removeItem('emIndiaUserAccount');
+    localStorage.removeItem('emIndiaForceReferralSignOut');
+  }catch(e){}
+}
+window.emIndiaReferralLinkSignOut = async function(){
+  try{ await signOut(auth); }catch(e){}
+  try{
+    localStorage.removeItem('emIndiaCurrentUserV2');
+    localStorage.removeItem('emIndiaUserAccount');
+    localStorage.removeItem('emIndiaForceReferralSignOut');
+  }catch(e){}
+};
 const ACCOUNTS_KEY = 'emIndiaAccountsV2';
 const CURRENT_KEY = 'emIndiaCurrentUserV2';
 
@@ -706,7 +760,13 @@ function restoreLocalAccount(email, name=''){
     cart: Array.isArray(old.cart) ? old.cart : [],
     history: Array.isArray(old.history) ? old.history : [],
     referralCode: old.referralCode || '',
-    foodReferrerDiscount: !!old.foodReferrerDiscount
+    foodReferrerDiscount: !!old.foodReferrerDiscount,
+    ownFoodReferralSharedAt: old.ownFoodReferralSharedAt || '',
+    foodReferrerDiscountActivatedAt: old.foodReferrerDiscountActivatedAt || '',
+    comboReferralCashback: Number(old.comboReferralCashback || 0),
+    ownComboReferralSharedAt: old.ownComboReferralSharedAt || '',
+    comboReferralCashbackActivatedAt: old.comboReferralCashbackActivatedAt || '',
+    referralRewardVersion: Number(old.referralRewardVersion || 0)
   };
   writeAccounts(accounts);
   localStorage.setItem(CURRENT_KEY,email);
@@ -854,6 +914,7 @@ window.verifyPhoneOTP=async function(){
 };
 
 onAuthStateChanged(auth,(user)=>{
+  if(localStorage.getItem('emIndiaForceReferralSignOut')==='1') return;
   if(!user){ return; }
   const email=(user.email||'').trim().toLowerCase();
   if(email) restoreLocalAccount(email,user.displayName||'');
@@ -863,5 +924,11 @@ onAuthStateChanged(auth,(user)=>{
 });
 </script>
 
+
+<script>
+window.addEventListener('load',function(){
+  try{ if(typeof window.applyReferralFromLink==='function') window.applyReferralFromLink(); }catch(e){}
+});
+</script>
 </body>
 </html>
