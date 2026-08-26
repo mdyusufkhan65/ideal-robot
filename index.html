@@ -93,6 +93,7 @@ footer{background:#073c18;color:#fff;display:grid;grid-template-columns:2fr 1fr 
 .ref-close{position:absolute;right:13px;top:8px;border:0;background:transparent;font-size:28px;cursor:pointer;color:#555}
 .ref-status{margin-top:9px;font-size:12px;font-weight:700;color:#0b6a28;min-height:18px}
 </style>
+<meta name="em-india-login-fix" content="2026-08-26-clean-1">
 </head>
 <body>
 
@@ -558,80 +559,61 @@ updateCart();
     el.innerHTML=lines.join('<br>');
   };
 
-  async function copyReferralLink(url){
+  async function copyOrOpenShare(text,url){
     if(navigator.clipboard&&navigator.clipboard.writeText){
-      try{await navigator.clipboard.writeText(url);return true;}catch(e){}
+      try{await navigator.clipboard.writeText(url);return 'copied';}catch(e){}
     }
-    const area=document.createElement('textarea');
-    area.value=url; area.setAttribute('readonly',''); area.style.position='fixed'; area.style.opacity='0';
-    document.body.appendChild(area); area.select();
-    let ok=false; try{ok=document.execCommand('copy');}catch(e){} area.remove();
-    if(ok)return true;
-    window.prompt('Copy your referral link:',url);
-    return false;
+    try{
+      window.open('https://wa.me/?text='+encodeURIComponent(text),'_blank','noopener');
+      return 'whatsapp';
+    }catch(e){
+      window.prompt('Copy your referral link:',url);
+      return 'prompt';
+    }
   }
 
   async function shareReferral(mode){
-    if(!requireAccount())return false;
+    if(!requireAccount())return;
     const code=window.getReferralCode();
     const label=mode==='combo'?'Combo':'Food';
     const reward=mode==='combo'?'₹100 Combo cashback':'15% OFF on Food';
     const url=PUBLIC_URL+'?ref='+encodeURIComponent(code)+'&mode='+encodeURIComponent(mode);
     const text='EM India '+label+' referral link: '+url;
-    let shared=false;
-    let method='';
-
+    let success=false;
     if(navigator.share){
       try{
         await navigator.share({title:'EM India '+label+' Referral',text,url});
-        shared=true; method='native';
+        success=true;
       }catch(e){
-        // If the share sheet is unavailable or cancelled, continue to the desktop fallback.
+        // Cancel/unsupported share sheets must fall back instead of doing nothing.
       }
     }
-
-    if(!shared){
-      const wa='https://wa.me/?text='+encodeURIComponent(text);
-      const popup=window.open(wa,'_blank');
-      if(popup){ shared=true; method='whatsapp'; }
+    if(!success){
+      const method=await copyOrOpenShare(text,url);
+      success=!!method;
+      if(method==='copied'&&typeof window.showToast==='function')window.showToast(label+' referral link copied. '+reward+' is now active.');
+      else if(method==='whatsapp'&&typeof window.showToast==='function')window.showToast('Choose a WhatsApp contact to share your '+label+' referral. '+reward+' is now active.');
     }
-
-    if(!shared){
-      await copyReferralLink(url);
-      method='copied';
-      shared=true;
-    }
-
-    if(shared){
+    if(success){
       activateOwnBenefit(mode);
       refresh();
-      if(typeof window.showToast==='function'){
-        if(method==='whatsapp') window.showToast('WhatsApp opened. Choose a contact to send your '+label+' referral. '+reward+' unlocked.');
-        else if(method==='copied') window.showToast(label+' referral link copied. '+reward+' unlocked.');
-        else window.showToast(label+' referral shared. '+reward+' unlocked.');
-      }
-      return true;
+      if(typeof window.showToast==='function' && navigator.share)window.showToast(label+' referral shared. '+reward+' is now active.');
     }
-    return false;
   }
 
   window.shareFoodReferral=function(){return shareReferral('food');};
   window.shareComboReferral=function(){return shareReferral('combo');};
 
-  // Opening a referral link never grants the recipient a reward. It only starts a fresh recipient session.
+  // Opening a referral link is tracking only. Never grant any discount or cashback to the recipient.
   window.applyReferralFromLink=function(){
     const params=new URLSearchParams(location.search);
     const ref=(params.get('ref')||'').trim().toUpperCase();
     const mode=(params.get('mode')||'').trim().toLowerCase();
     if(ref&&/^EM[A-Z0-9]{4,20}$/.test(ref)&&(mode==='food'||mode==='combo')){
-      const token=ref+'|'+mode;
-      if(sessionStorage.getItem('emIndiaReferralLinkHandled')===token) return;
-      sessionStorage.setItem('emIndiaReferralLinkHandled',token);
       localStorage.setItem('emIndiaIncomingReferralCode',ref);
       localStorage.setItem('emIndiaIncomingReferralMode',mode);
       localStorage.setItem('emIndiaIncomingReferralAt',new Date().toISOString());
-      // Force Firebase sign-out as well. The module reads this flag even if it loads after this script.
-      localStorage.setItem('emIndiaForceReferralSignOut','1');
+      // IMPORTANT: the link recipient must not inherit the sharer's logged-in account or reward.
       localStorage.removeItem(CURRENT_KEY);
       localStorage.removeItem('emIndiaUserAccount');
       if(typeof window.emIndiaReferralLinkSignOut==='function'){
@@ -640,8 +622,6 @@ updateCart();
           if(typeof window.updateCart==='function')window.updateCart();
         });
       }
-      // Consume the referral URL so the recipient can create/login and refresh without being logged out again.
-      try{ history.replaceState({},document.title,location.pathname+location.hash); }catch(e){}
       return;
     }
     localStorage.removeItem('emIndiaAppliedReferralCode');
@@ -707,25 +687,13 @@ const firebaseConfig = {
 
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
-// A referral link can be opened in the same browser as the sharer. Sign out Firebase BEFORE
-// registering the auth listener, otherwise the old sharer session can be restored and wrongly get the reward.
-const mustResetReferralSession = localStorage.getItem('emIndiaForceReferralSignOut')==='1';
-if(mustResetReferralSession){
-  try{ await signOut(auth); }catch(e){}
-  try{
-    localStorage.removeItem('emIndiaCurrentUserV2');
-    localStorage.removeItem('emIndiaUserAccount');
-    localStorage.removeItem('emIndiaForceReferralSignOut');
-  }catch(e){}
-}
+// A referral link must open as a fresh recipient session. This prevents the sharer's
+// existing Firebase session on the same browser/device from being mistaken for the recipient.
 window.emIndiaReferralLinkSignOut = async function(){
   try{ await signOut(auth); }catch(e){}
-  try{
-    localStorage.removeItem('emIndiaCurrentUserV2');
-    localStorage.removeItem('emIndiaUserAccount');
-    localStorage.removeItem('emIndiaForceReferralSignOut');
-  }catch(e){}
+  try{ localStorage.removeItem('emIndiaCurrentUserV2'); localStorage.removeItem('emIndiaUserAccount'); }catch(e){}
 };
+const LOGIN_FIX_VERSION = '2026-08-26-clean-1';
 const ACCOUNTS_KEY = 'emIndiaAccountsV2';
 const CURRENT_KEY = 'emIndiaCurrentUserV2';
 
@@ -748,7 +716,11 @@ function friendlyError(error){
   if(code==='auth/too-many-requests') return 'Too many attempts. Please wait a moment and try again.';
   if(code==='auth/network-request-failed') return 'Network error. Please check your internet connection and try again.';
   if(code==='auth/operation-not-allowed') return 'Email/Password sign-in is not enabled in Firebase yet.';
-  if(code==='auth/unauthorized-continue-uri') return 'Password reset is not configured for this website URL yet. Add em-indiacvstore.vercel.app to Firebase Authorized domains.';
+  if(code==='auth/unauthorized-continue-uri') return 'Password reset is not configured correctly in Firebase. Please check Authorized domains.';
+  if(code==='auth/invalid-api-key' || code==='auth/app-deleted') return 'Firebase connection is not configured correctly. Please check the website Firebase settings.';
+  if(code==='auth/invalid-app-credential' || code==='auth/missing-app-credential') return 'Phone security verification failed. Complete the CAPTCHA again and retry.';
+  if(code==='auth/invalid-verification-code') return 'The OTP is incorrect. Please enter the latest 6-digit OTP.';
+  if(code==='auth/code-expired') return 'This OTP has expired. Please request a new OTP.';
   return (error && error.message) ? error.message : 'Something went wrong. Please try again.';
 }
 function restoreLocalAccount(email, name=''){
@@ -815,20 +787,22 @@ window.loginAccount = async function(){
 
 window.resetPassword = async function(){
   const email=(document.getElementById('accountEmail').value||'').trim().toLowerCase();
+  const btn=document.getElementById('forgotPasswordBtn');
   if(!email){ setStatus('Enter your registered email first, then tap FORGOT PASSWORD.', true); return; }
+  if(btn){ btn.disabled=true; btn.textContent='SENDING...'; }
   setStatus('Sending password reset email...');
   try{
-    await sendPasswordResetEmail(auth,email,{
-      url:'https://em-indiacvstore.vercel.app/',
-      handleCodeInApp:false
-    });
-    setStatus('Password reset email sent. Check Inbox, Spam and Promotions, then open the Firebase link to set a new password.');
+    await sendPasswordResetEmail(auth,email);
+    setStatus('Password reset email sent. Check Inbox, Spam and Promotions for the Firebase password reset link.');
     if(typeof window.showToast==='function') window.showToast('Password reset email sent');
   }catch(error){ setStatus(friendlyError(error), true); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent='FORGOT PASSWORD?'; } }
 };
 
 let phoneConfirmationResult=null;
 let phoneRecaptchaVerifier=null;
+let phoneRecaptchaWidgetId=null;
+let phoneCaptchaSolved=false;
 
 function normalizePhoneNumber(value){
   let phone=String(value||'').trim().replace(/[\s\-()]/g,'');
@@ -845,51 +819,70 @@ function restorePhoneAccount(phone,name=''){
   const key=phoneAccountKey(phone);
   const accounts=readAccounts();
   const old=accounts[key]||{};
-  accounts[key]={
-    name:name||old.name||'Phone User',
-    email:key,
-    phone:phone,
-    cart:Array.isArray(old.cart)?old.cart:[],
-    history:Array.isArray(old.history)?old.history:[],
-    referralCode:old.referralCode||'',
-    foodReferrerDiscount:!!old.foodReferrerDiscount
-  };
+  accounts[key]={...old,name:name||old.name||'Phone User',email:key,phone:phone,cart:Array.isArray(old.cart)?old.cart:[],history:Array.isArray(old.history)?old.history:[],referralCode:old.referralCode||'',foodReferrerDiscount:!!old.foodReferrerDiscount};
   writeAccounts(accounts);
   localStorage.setItem(CURRENT_KEY,key);
   localStorage.setItem('emIndiaUserAccount',JSON.stringify(accounts[key]));
   return accounts[key];
 }
-function getPhoneRecaptcha(){
-  if(phoneRecaptchaVerifier) return phoneRecaptchaVerifier;
+async function getPhoneRecaptcha(){
   const container=document.getElementById('phoneRecaptchaContainer');
   if(!container) throw new Error('Phone verification is not ready. Please reopen the login box.');
+  if(phoneRecaptchaVerifier) return phoneRecaptchaVerifier;
+  container.innerHTML='';
+  phoneCaptchaSolved=false;
   phoneRecaptchaVerifier=new RecaptchaVerifier(auth,'phoneRecaptchaContainer',{
-    size:'invisible',
-    callback:()=>{}
+    size:'normal',
+    callback:()=>{
+      phoneCaptchaSolved=true;
+      setStatus('Security verification complete. Now tap SEND OTP.');
+    },
+    'expired-callback':()=>{
+      phoneCaptchaSolved=false;
+      setStatus('Security verification expired. Please complete the CAPTCHA again.',true);
+    }
   });
+  phoneRecaptchaWidgetId=await phoneRecaptchaVerifier.render();
   return phoneRecaptchaVerifier;
+}
+function resetPhoneRecaptcha(){
+  try{ if(phoneRecaptchaVerifier) phoneRecaptchaVerifier.clear(); }catch(e){}
+  phoneRecaptchaVerifier=null;
+  phoneRecaptchaWidgetId=null;
+  phoneCaptchaSolved=false;
+  const container=document.getElementById('phoneRecaptchaContainer');
+  if(container) container.innerHTML='';
 }
 window.sendPhoneOTP=async function(){
   const phone=normalizePhoneNumber(document.getElementById('phoneNumber').value||'');
   if(!/^\+\d{8,15}$/.test(phone)){
     setStatus('Enter a valid phone number with country code, for example +91 9876543210.',true); return;
   }
-  setStatus('Preparing security verification...');
+  const btn=document.getElementById('sendOtpBtn');
   try{
-    const verifier=getPhoneRecaptcha();
+    const verifier=await getPhoneRecaptcha();
+    if(!phoneCaptchaSolved){
+      setStatus('First complete the CAPTCHA shown below, then tap SEND OTP.',true);
+      return;
+    }
+    if(btn){ btn.disabled=true; btn.textContent='SENDING OTP...'; }
+    setStatus('Sending OTP...');
     phoneConfirmationResult=await signInWithPhoneNumber(auth,phone,verifier);
     document.getElementById('phoneOtpArea').style.display='block';
     setStatus('OTP sent to '+phone+'. Enter the 6-digit code to continue.');
     if(typeof window.showToast==='function') window.showToast('OTP sent successfully');
     setTimeout(()=>document.getElementById('phoneOtp')?.focus(),100);
   }catch(error){
-    if(phoneRecaptchaVerifier){ try{phoneRecaptchaVerifier.clear();}catch(e){} phoneRecaptchaVerifier=null; }
+    resetPhoneRecaptcha();
     const code=(error&&error.code)||'';
     if(code==='auth/invalid-phone-number') setStatus('Invalid phone number. Use full format, for example +91 9876543210.',true);
     else if(code==='auth/operation-not-allowed') setStatus('Phone Number sign-in is not enabled in Firebase.',true);
-    else if(code==='auth/captcha-check-failed') setStatus('Security verification failed. Please try SEND OTP again.',true);
+    else if(code==='auth/captcha-check-failed' || code==='auth/invalid-app-credential') setStatus('CAPTCHA verification failed. Complete the new CAPTCHA and try again.',true);
     else if(code==='auth/too-many-requests') setStatus('Too many OTP attempts. Please wait and try again later.',true);
+    else if(code==='auth/quota-exceeded') setStatus('Firebase SMS quota has been reached. Please try again later.',true);
     else setStatus(friendlyError(error),true);
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent='SEND OTP'; }
   }
 };
 window.verifyPhoneOTP=async function(){
@@ -902,6 +895,7 @@ window.verifyPhoneOTP=async function(){
     const phone=result.user.phoneNumber||normalizePhoneNumber(document.getElementById('phoneNumber').value||'');
     restorePhoneAccount(phone,result.user.displayName||'Phone User');
     refreshWebsiteAccount();
+    resetPhoneRecaptcha();
     setStatus('Phone number verified. Login successful and your account is ready.');
     if(typeof window.showToast==='function') window.showToast('Phone login successful');
     setTimeout(()=>{ try{ if(typeof window.closeAll==='function') window.closeAll(); }catch(e){} },700);
@@ -914,7 +908,6 @@ window.verifyPhoneOTP=async function(){
 };
 
 onAuthStateChanged(auth,(user)=>{
-  if(localStorage.getItem('emIndiaForceReferralSignOut')==='1') return;
   if(!user){ return; }
   const email=(user.email||'').trim().toLowerCase();
   if(email) restoreLocalAccount(email,user.displayName||'');
