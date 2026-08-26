@@ -689,6 +689,9 @@ const firebaseConfig = {
 
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
+auth.languageCode = 'en';
+// Diagnostic: this confirms which Firebase project this HTML is actually connected to.
+console.info('[EM India] Firebase Auth project:', firebaseConfig.projectId, 'Auth domain:', firebaseConfig.authDomain);
 // A referral link must open as a fresh recipient session. This prevents the sharer's
 // existing Firebase session on the same browser/device from being mistaken for the recipient.
 window.emIndiaReferralLinkSignOut = async function(){
@@ -716,7 +719,7 @@ function friendlyError(error){
   if(code==='auth/user-not-found') return 'No Firebase account was found with this email. Please create an account first.';
   if(code==='auth/too-many-requests') return 'Too many attempts. Please wait a moment and try again.';
   if(code==='auth/network-request-failed') return 'Network error. Please check your internet connection and try again.';
-  if(code==='auth/operation-not-allowed') return 'Email/Password sign-in is not enabled in Firebase yet.';
+  if(code==='auth/operation-not-allowed') return 'This sign-in method is currently rejected by Firebase. Please check the Firebase project used by this website.';
   if(code==='auth/unauthorized-continue-uri') return 'Password reset is not configured for this website URL yet. Add em-indiacvstore.vercel.app to Firebase Authorized domains.';
   return (error && error.message) ? error.message : 'Something went wrong. Please try again.';
 }
@@ -882,7 +885,7 @@ window.sendPhoneOTP=async function(){
     }else if(code==='auth/quota-exceeded'){
       setStatus('Today’s Firebase SMS quota has been reached. Please try again later.',true);
     }else if(code==='auth/operation-not-allowed'){
-      setStatus('Firebase rejected the phone sign-in request. Phone is enabled in the console, so please redeploy this updated file and try again. Error: '+code,true);
+      setStatus('Firebase rejected Phone Authentication for the Firebase project connected to this website (auth/operation-not-allowed). Please verify that the deployed website uses the same Firebase project where Phone is enabled.',true);
     }else{
       setStatus((friendlyError(error)||'Unable to send OTP.')+(code?' ('+code+')':''),true);
     }
