@@ -93,6 +93,10 @@ footer{background:#073c18;color:#fff;display:grid;grid-template-columns:2fr 1fr 
 .ref-close{position:absolute;right:13px;top:8px;border:0;background:transparent;font-size:28px;cursor:pointer;color:#555}
 .ref-status{margin-top:9px;font-size:12px;font-weight:700;color:#0b6a28;min-height:18px}
 </style>
+
+<!-- EM INDIA favicon -->
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="shortcut icon" href="/favicon.ico">
 </head>
 <body>
 
@@ -389,12 +393,13 @@ function orderTypeOnWhatsApp(type){
   const discountLine=totals.discount?`\nReferral 15% Discount: -${formatPrice(totals.discount)}`:"";
   const referralLine=totals.appliedReferral?`\nReferral Code Applied: ${totals.appliedReferral}`:"";
   const message=`Hello EM India, I want to order the following ${heading}:\n\n${list}\n\nSubtotal: ${formatPrice(totals.subtotal)}${discountLine}\nTotal Payable: ${formatPrice(totals.total)}${referralLine}\n\nPlease confirm my order. Thank you!`;
+  try{ if(typeof window.addOrderHistory==='function') window.addOrderHistory('WhatsApp order request — '+heading,items,totals.total); }catch(e){}
   window.location.href="https://wa.me/"+WHATSAPP_NUMBER+"?text="+encodeURIComponent(message);
 }
 function orderCartOnWhatsApp(){if(cartItems.length)orderTypeOnWhatsApp("product");}
 function addToCart(name){const p=products.find(x=>x.name===name);const type=isHairProduct(name)?"hair":"product";addCartItem(name,type,{image:p&&p.image?p.image:"",heading:getCartHeading(name,type),price:p&&p.price?p.price:""});showToast("Product added to cart");}
 function openCart(){updateCart();document.getElementById("overlay").classList.add("open");document.getElementById("cartDrawer").classList.add("open");}
-function openLogin(){document.getElementById("overlay").classList.add("open");document.getElementById("loginBox").classList.add("open");}
+function openLogin(){document.getElementById("overlay").classList.add("open");document.getElementById("loginBox").classList.add("open");try{if(typeof window.renderHistory==='function')window.renderHistory();}catch(e){}}
 function closeAll(){document.getElementById("overlay").classList.remove("open");document.getElementById("cartDrawer").classList.remove("open");document.getElementById("loginBox").classList.remove("open");const rb=document.getElementById("referralBox");if(rb)rb.classList.remove("open");const fm=document.getElementById("foodMenuModal");if(fm)fm.classList.remove("open");}
 function loginDemo(){closeAll();showToast("Login section ready — final login system can be connected later.");}
 function showToast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),1800);}
@@ -422,6 +427,7 @@ function orderComboDirectlyOnWhatsApp(){
   const appliedReferral=localStorage.getItem("emIndiaAppliedReferralCode")||"";
   const referralLine=appliedReferral?`\n\nReferral Code Applied: ${appliedReferral}`:"";
   const message=`Hello EM India, I want to order the ₹1499 Limited Time Combo:\n\n${COMBO_NAME}${referralLine}\n\nPlease confirm my order. Thank you!`;
+  try{ if(typeof window.addOrderHistory==='function') window.addOrderHistory('WhatsApp order request — Limited Time Combo',[{name:COMBO_NAME,qty:1}],1499); }catch(e){}
   window.location.href="https://wa.me/"+WHATSAPP_NUMBER+"?text="+encodeURIComponent(message);
 }
 
@@ -706,6 +712,64 @@ function readAccounts(){
   catch(e){ return {}; }
 }
 function writeAccounts(accounts){ localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts)); }
+
+
+/* ACCOUNT HISTORY
+   Orders on this website are sent to WhatsApp for confirmation, so history stores the
+   order REQUEST made by the logged-in account. It does not falsely mark the request
+   as a confirmed or paid order. */
+function getCurrentAccountRecord(){
+  const accounts=readAccounts();
+  const key=localStorage.getItem(CURRENT_KEY)||'';
+  return {accounts,key,account:accounts[key]||null};
+}
+
+window.renderHistory=function(){
+  const box=document.getElementById('accountHistory');
+  if(!box) return;
+  const {account}=getCurrentAccountRecord();
+  if(!account){ box.innerHTML=''; return; }
+  const history=Array.isArray(account.history)?account.history:[];
+  if(!history.length){
+    box.innerHTML='<div style="border-top:1px solid #eee;padding-top:10px;color:#777"><b style="display:block;color:#333;margin-bottom:4px">YOUR ORDER HISTORY</b>No orders yet.</div>';
+    return;
+  }
+  const rows=history.slice(0,20).map(entry=>{
+    const date=entry.createdAt ? new Date(entry.createdAt).toLocaleString('en-IN',{dateStyle:'medium',timeStyle:'short'}) : '';
+    const items=(entry.items||[]).map(item=>`${item.name||'Product'} × ${Number(item.qty||1)}`).join(', ');
+    const total=Number(entry.total||0)>0 ? ` • Total ${formatHistoryPrice(entry.total)}` : '';
+    return `<div style="border-top:1px solid #eee;padding:9px 0;line-height:1.45"><b>${escapeHistoryHtml(entry.label||'Order request sent')}</b><br><span style="color:#555">${escapeHistoryHtml(items||'Items')}</span><br><span style="color:#777;font-size:11px">${escapeHistoryHtml(date)}${total}</span></div>`;
+  }).join('');
+  box.innerHTML='<div style="border-top:1px solid #eee;padding-top:10px"><b style="display:block;color:#333;margin-bottom:3px">YOUR ORDER HISTORY</b>'+rows+'</div>';
+};
+
+function escapeHistoryHtml(value){
+  return String(value==null?'':value).replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
+}
+function formatHistoryPrice(value){ return '₹'+Math.round(Number(value)||0); }
+
+window.addOrderHistory=function(label,items,total){
+  const {accounts,key,account}=getCurrentAccountRecord();
+  if(!account || !key) return false;
+  account.history=Array.isArray(account.history)?account.history:[];
+  const safeItems=(Array.isArray(items)?items:[]).map(item=>({
+    name:String(item.name||'Product'), qty:Math.max(1,Number(item.qty)||1)
+  }));
+  account.history.unshift({
+    id:'ord_'+Date.now()+'_'+Math.random().toString(36).slice(2,8),
+    label:String(label||'Order request sent'),
+    items:safeItems,
+    total:Number(total)||0,
+    status:'WhatsApp order request sent',
+    createdAt:new Date().toISOString()
+  });
+  account.history=account.history.slice(0,50);
+  accounts[key]=account;
+  writeAccounts(accounts);
+  localStorage.setItem('emIndiaUserAccount',JSON.stringify(account));
+  window.renderHistory();
+  return true;
+};
 function setStatus(message, isError=false){
   const el=document.getElementById('accountStatus');
   if(el){ el.textContent=message; el.style.color=isError ? '#b42318' : '#176b2c'; }
