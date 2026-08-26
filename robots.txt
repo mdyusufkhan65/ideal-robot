@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://em-indiacvstore.vercel.app/sitemap.xml
