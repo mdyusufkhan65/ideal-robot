@@ -186,7 +186,8 @@ footer{background:#073c18;color:#fff;display:grid;grid-template-columns:2fr 1fr 
   <button class="login-submit" id="forgotPasswordBtn" type="button" style="margin-top:8px;background:#d55a20" onclick="resetPassword()">FORGOT PASSWORD?</button>
   <p style="font-size:11px;color:#777;margin:8px 0 0;text-align:center">Enter your registered email above and we will send a password reset link to that email.</p>
   <div style="display:flex;align-items:center;gap:10px;margin:16px 0 8px;color:#777;font-size:11px"><span style="height:1px;background:#ddd;flex:1"></span><b>OR LOGIN WITH PHONE</b><span style="height:1px;background:#ddd;flex:1"></span></div>
-  <input type="tel" id="phoneNumber" placeholder="Phone number e.g. +91 9876543210" inputmode="tel">
+  <input type="tel" id="phoneNumber" placeholder="Enter 10-digit mobile number" inputmode="numeric" maxlength="16">
+  <p style="font-size:11px;color:#777;margin:6px 0 0;text-align:center">For India, enter only your 10-digit mobile number. +91 is added automatically.</p>
   <button class="login-submit" id="sendOtpBtn" type="button" style="margin-top:8px;background:#0c5b28" onclick="sendPhoneOTP()">SEND OTP</button>
   <div id="phoneOtpArea" style="display:none;margin-top:8px">
     <input type="text" id="phoneOtp" placeholder="Enter 6-digit OTP" inputmode="numeric" maxlength="6">
@@ -679,21 +680,31 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
 /* Firebase configuration copied from the Firebase Web App configuration shown for em-indiacvstore. */
+// Full Firebase Web App configuration for the em-indiacvstore project.
+// Use a dedicated named app so this authentication flow can never accidentally
+// attach to another Firebase app already present on the page.
 const firebaseConfig = {
   apiKey: "AIzaSyDTi4-CmLcPtpLhkUqRI9ayhzZkLqH-d2Y",
   authDomain: "em-indiacvstore.firebaseapp.com",
-  projectId: "em-indiacvstore"
+  projectId: "em-indiacvstore",
+  storageBucket: "em-indiacvstore.firebasestorage.app",
+  messagingSenderId: "620515634050",
+  appId: "1:620515634050:web:ad441aaee0a3f653d0b9b"
 };
 
-const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+const EM_INDIA_FIREBASE_APP_NAME = 'emIndiaFirebaseAuth';
+const app = getApps().some(existingApp => existingApp.name === EM_INDIA_FIREBASE_APP_NAME)
+  ? getApp(EM_INDIA_FIREBASE_APP_NAME)
+  : initializeApp(firebaseConfig, EM_INDIA_FIREBASE_APP_NAME);
 const auth = getAuth(app);
+auth.languageCode = 'en';
 // A referral link must open as a fresh recipient session. This prevents the sharer's
 // existing Firebase session on the same browser/device from being mistaken for the recipient.
 window.emIndiaReferralLinkSignOut = async function(){
   try{ await signOut(auth); }catch(e){}
   try{ localStorage.removeItem('emIndiaCurrentUserV2'); localStorage.removeItem('emIndiaUserAccount'); }catch(e){}
 };
-const LOGIN_FIX_VERSION = '2026-08-26-clean-1';
+const LOGIN_FIX_VERSION = '2026-08-26-phone-auth-v2';
 const ACCOUNTS_KEY = 'emIndiaAccountsV2';
 const CURRENT_KEY = 'emIndiaCurrentUserV2';
 
@@ -717,6 +728,8 @@ function friendlyError(error){
   if(code==='auth/network-request-failed') return 'Network error. Please check your internet connection and try again.';
   if(code==='auth/operation-not-allowed') return 'Email/Password sign-in is not enabled in Firebase yet.';
   if(code==='auth/unauthorized-continue-uri') return 'Password reset is not configured correctly in Firebase. Please check Authorized domains.';
+  if(code==='auth/user-disabled') return 'This account has been disabled. Please contact support.';
+  if(code==='auth/missing-email') return 'Enter your registered email address first.';
   if(code==='auth/invalid-api-key' || code==='auth/app-deleted') return 'Firebase connection is not configured correctly. Please check the website Firebase settings.';
   if(code==='auth/invalid-app-credential' || code==='auth/missing-app-credential') return 'Phone security verification failed. Complete the CAPTCHA again and retry.';
   if(code==='auth/invalid-verification-code') return 'The OTP is incorrect. Please enter the latest 6-digit OTP.';
@@ -792,7 +805,11 @@ window.resetPassword = async function(){
   if(btn){ btn.disabled=true; btn.textContent='SENDING...'; }
   setStatus('Sending password reset email...');
   try{
-    await sendPasswordResetEmail(auth,email);
+    const actionCodeSettings={
+      url: window.location.origin + '/',
+      handleCodeInApp: false
+    };
+    await sendPasswordResetEmail(auth,email,actionCodeSettings);
     setStatus('Password reset email sent. Check Inbox, Spam and Promotions for the Firebase password reset link.');
     if(typeof window.showToast==='function') window.showToast('Password reset email sent');
   }catch(error){ setStatus(friendlyError(error), true); }
@@ -853,10 +870,19 @@ function resetPhoneRecaptcha(){
   const container=document.getElementById('phoneRecaptchaContainer');
   if(container) container.innerHTML='';
 }
+const phoneInput=document.getElementById('phoneNumber');
+if(phoneInput){
+  phoneInput.addEventListener('input',()=>{
+    // Keep the field simple for Indian users while still allowing an explicit + country code.
+    const raw=phoneInput.value||'';
+    if(!raw.trim().startsWith('+')) phoneInput.value=raw.replace(/\D/g,'').slice(0,10);
+  });
+}
+
 window.sendPhoneOTP=async function(){
   const phone=normalizePhoneNumber(document.getElementById('phoneNumber').value||'');
   if(!/^\+\d{8,15}$/.test(phone)){
-    setStatus('Enter a valid phone number with country code, for example +91 9876543210.',true); return;
+    setStatus('Enter a valid 10-digit Indian mobile number.',true); return;
   }
   const btn=document.getElementById('sendOtpBtn');
   try{
@@ -875,7 +901,7 @@ window.sendPhoneOTP=async function(){
   }catch(error){
     resetPhoneRecaptcha();
     const code=(error&&error.code)||'';
-    if(code==='auth/invalid-phone-number') setStatus('Invalid phone number. Use full format, for example +91 9876543210.',true);
+    if(code==='auth/invalid-phone-number') setStatus('Invalid phone number. Enter a valid 10-digit mobile number.',true);
     else if(code==='auth/operation-not-allowed') setStatus('Phone Number sign-in is not enabled in Firebase.',true);
     else if(code==='auth/captcha-check-failed' || code==='auth/invalid-app-credential') setStatus('CAPTCHA verification failed. Complete the new CAPTCHA and try again.',true);
     else if(code==='auth/too-many-requests') setStatus('Too many OTP attempts. Please wait and try again later.',true);
