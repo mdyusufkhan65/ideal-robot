@@ -299,7 +299,7 @@ function renderFoodGallery(){
   const gallery=document.getElementById('foodGallery'); if(!gallery)return;
   gallery.innerHTML=foodItems.map(item=>{
     if(item.dynamicEggPrice){
-      return `<article class="food-item-card"><img src="${foodImage(item)}" alt="${item.name}"><div class="food-item-info"><div><div class="food-item-name">Egg Roll</div><div class="food-item-meta">1 Egg ₹29 · Every extra egg +₹10</div></div><div class="food-item-action"><select id="eggRollCount" aria-label="Number of eggs in Egg Roll" style="padding:7px;border:1px solid #ddd;border-radius:8px;font-weight:700"><option value="1">1 Egg — ₹29</option><option value="2">2 Eggs — ₹39</option><option value="3">3 Eggs — ₹49</option><option value="4">4 Eggs — ₹59</option><option value="5">5 Eggs — ₹69</option><option value="6">6 Eggs — ₹79</option></select><button onclick="addEggRollToCart(document.getElementById('eggRollCount').value)">ADD</button></div></div></article>`;
+      return `<article class="food-item-card"><img src="${foodImage(item)}" alt="${item.name}"><div class="food-item-info"><div><div class="food-item-name">Egg Roll</div><div class="food-item-meta">1 Egg ₹29 · Every extra egg +₹15</div></div><div class="food-item-action"><select id="eggRollCount" aria-label="Number of eggs in Egg Roll" style="padding:7px;border:1px solid #ddd;border-radius:8px;font-weight:700"><option value="1">1 Egg — ₹29</option><option value="2">2 Eggs — ₹44</option><option value="3">3 Eggs — ₹59</option><option value="4">4 Eggs — ₹74</option><option value="5">5 Eggs — ₹89</option><option value="6">6 Eggs — ₹104</option></select><button onclick="addEggRollToCart(document.getElementById('eggRollCount').value)">ADD</button></div></div></article>`;
     }
     return `<article class="food-item-card"><img src="${foodImage(item)}" alt="${item.name}"><div class="food-item-info"><div><div class="food-item-name">${item.name}</div>${item.meta?`<div class="food-item-meta">${item.meta}</div>`:''}</div><div class="food-item-action"><div class="food-item-price">${item.price}</div><button onclick="addFoodToCart('${item.name}${item.meta?' - '+item.meta:''}','${item.price}')">ADD</button></div></div></article>`;
   }).join('');
@@ -314,7 +314,7 @@ function addFoodToCart(name,price){
 }
 function addEggRollToCart(eggCount){
   const eggs=Math.max(1,parseInt(eggCount,10)||1);
-  const price=39+(eggs-1)*10;
+  const price=29+(eggs-1)*15;
   const name=`Egg Roll - ${eggs} Egg${eggs>1?'s':''}`;
   addCartItem(name,'food',{heading:'EM INDIA FOOD MENU',image:foodItemImages['Egg Roll']||'',price:`₹${price}`,eggCount:eggs});
   showToast(`${name} ₹${price} added to cart`);
