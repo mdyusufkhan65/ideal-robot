@@ -273,7 +273,7 @@ function renderProducts(list=products){
 const foodItems=[
   {name:"Chicken Keema Burger",price:"₹89",emoji:"🍔",tone:"#d97706"},
   {name:"Aloo Tikki Burger",price:"₹29",emoji:"🍔",tone:"#f59e0b"},
-  {name:"Egg Roll",price:"₹29",emoji:"🌯",tone:"#d97706",dynamicEggPrice:true},
+  {name:"Egg Roll",price:"₹39",emoji:"🌯",tone:"#d97706",dynamicEggPrice:true},
   {name:"White Sauce Pasta",meta:"Half Plate",price:"₹79",emoji:"🍝",tone:"#e5d3b3"},
   {name:"Masala Tadka Pasta",meta:"Half Plate",price:"₹39",emoji:"🍝",tone:"#ea8b2d"},
   {name:"Butter Maggi",meta:"Half Plate",price:"₹59",emoji:"🍜",tone:"#f4b400"},
@@ -314,7 +314,7 @@ function addFoodToCart(name,price){
 }
 function addEggRollToCart(eggCount){
   const eggs=Math.max(1,parseInt(eggCount,10)||1);
-  const price=29+(eggs-1)*10;
+  const price=39+(eggs-1)*10;
   const name=`Egg Roll - ${eggs} Egg${eggs>1?'s':''}`;
   addCartItem(name,'food',{heading:'EM INDIA FOOD MENU',image:foodItemImages['Egg Roll']||'',price:`₹${price}`,eggCount:eggs});
   showToast(`${name} ₹${price} added to cart`);
